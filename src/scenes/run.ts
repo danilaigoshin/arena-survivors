@@ -2,7 +2,7 @@ import type { Game, Scene } from '../game';
 import { getWaveDef } from '../data/waves';
 import { FINAL_WAVE, ARENA_W, ARENA_H, WORLD_ZOOM } from '../config';
 import { moveAxis, isDown, consumeKeyPress, isTouchDevice, pauseButtonCircle } from '../core/input';
-import { toggleMute, toggleMusic, isMuted, isMusicOn } from '../render/audio';
+import { toggleMute, toggleMusic, isMuted, isMusicOn, setMusicIntensity } from '../render/audio';
 import { loadMeta } from '../core/save';
 import { button } from '../render/ui';
 import { norm, clamp } from '../utils/math';
@@ -85,6 +85,8 @@ class RunScene implements Scene {
     s.obstacles = map.obstacles;
     s.floorCanvas = bakeFloor(s.theme, s.wave);
     this.bannerTimer = 2.6;
+    // boss waves push the soundtrack to full intensity (no break sections)
+    setMusicIntensity(getWaveDef(s.wave).boss ? 1 : 0.6);
     // battlefield chests: one guaranteed, sometimes two
     s.chests = [];
     const chestCount = 1 + (Math.random() < 0.25 ? 1 : 0);
