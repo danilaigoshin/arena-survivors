@@ -1,0 +1,17 @@
+{
+  "name": "arena-survivors",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "check": "tsc --noEmit",
+    "deploy": "npm run build && touch dist/.nojekyll && cd dist && git init -b gh-pages && git add -A && git commit -m deploy && git push -f https://github.com/danilaigoshin/arena-survivors.git gh-pages && cd .. && rm -rf dist/.git"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "vite": "^6.0.0"
+  }
+}
