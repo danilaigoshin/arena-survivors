@@ -5,6 +5,7 @@ import { initInput, getMouse, consumeClick, clearFrameKeys, setJoystickEnabled }
 import { WeaponInstance } from './entities/weapon';
 import { weaponById } from './data/weapons';
 import { clearFx } from './render/fx';
+import { setMusicMode } from './render/audio';
 import type { UiInput } from './render/ui';
 import type { CharacterDef } from './data/characters';
 
@@ -91,6 +92,8 @@ export class Game {
       }
 
       setJoystickEnabled(this.scene.wantsJoystick === true);
+      // the run scene is the only joystick scene — it is also the combat-music scene
+      setMusicMode(this.scene.wantsJoystick === true ? 'combat' : 'calm');
       const m = getMouse();
       this.ui.mx = m.x;
       this.ui.my = m.y;

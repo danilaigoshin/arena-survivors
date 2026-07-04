@@ -82,7 +82,7 @@ function tone({ freq, freqEnd, type = 'square', dur, vol = 0.12, delay = 0, dest
   osc.stop(t0 + dur + 0.02);
 }
 
-function noise(dur: number, vol: number, filterFreq: number, delay = 0): void {
+function noise(dur: number, vol: number, filterFreq: number, delay = 0, dest?: AudioNode): void {
   if (!ac || !master) return;
   const t0 = ac.currentTime + delay;
   const len = Math.ceil(ac.sampleRate * dur);
@@ -98,7 +98,7 @@ function noise(dur: number, vol: number, filterFreq: number, delay = 0): void {
   const g = ac.createGain();
   g.gain.setValueAtTime(vol, t0);
   g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
-  src.connect(f).connect(g).connect(master);
+  src.connect(f).connect(g).connect(dest ?? master);
   src.start(t0);
 }
 
@@ -153,31 +153,94 @@ export function playSfx(event: SfxEvent): void {
   }
 }
 
-// ── background music: a soft minor arpeggio loop ─────────────
+// ── background music: two-mode loop — calm arpeggio in menus, driving action in combat ──
+export type MusicMode = 'calm' | 'combat';
+let musicMode: MusicMode = 'calm';
+
+/** Switched by the game loop: 'combat' while a run is active, 'calm' in menus/shop. */
+export function setMusicMode(mode: MusicMode): void {
+  musicMode = mode;
+}
+
 const BASS = [110, 110, 87.31, 98]; // A2 A2 F2 G2
 const ARP = [220, 261.63, 329.63, 261.63, 220, 329.63, 392, 329.63]; // Am figure
 
+/** Soft menu loop (the original track). */
+function calmBar(t: number, bar: number, barDur: number): void {
+  if (!ac || !musicGain) return;
+  const bass = BASS[bar % BASS.length];
+  tone({ freq: bass, type: 'triangle', dur: barDur * 0.9, vol: 0.5, delay: t - ac.currentTime, dest: musicGain });
+  for (let i = 0; i < 8; i++) {
+    const f = ARP[(i + (bar % 2) * 4) % ARP.length] * (bass / 110);
+    tone({ freq: f, type: 'sine', dur: 0.22, vol: 0.3, delay: t - ac.currentTime + (i * barDur) / 8, dest: musicGain });
+  }
+}
+
+// action track: 150 BPM, four-on-the-floor kick, snare on 2 & 4, pumping saw bass, pentatonic lead
+const COMBAT_BASS = [55, 55, 43.65, 49]; // A1 A1 F1 G1 per bar
+const PENTA = [220, 261.63, 293.66, 329.63, 392, 440]; // A minor pentatonic
+// 8th-note lead patterns (indices into PENTA, -1 = rest), rotated per bar
+const RIFFS = [
+  [0, -1, 3, 0, 4, -1, 3, 2],
+  [0, 0, -1, 2, 3, -1, 5, 4],
+  [4, -1, 3, 2, 0, -1, 2, 3],
+  [5, 4, 3, -1, 2, 0, -1, 0],
+];
+
+function combatBar(t: number, bar: number, barDur: number): void {
+  if (!ac || !musicGain) return;
+  const now = ac.currentTime;
+  const beat = barDur / 4;
+  const step = barDur / 8;
+  const bass = COMBAT_BASS[bar % COMBAT_BASS.length];
+
+  // kick: four on the floor
+  for (let b = 0; b < 4; b++) {
+    tone({ freq: 150, freqEnd: 45, type: 'sine', dur: 0.13, vol: 1.0, delay: t - now + b * beat, dest: musicGain });
+  }
+  // snare on 2 and 4 (+ a quick fill at the end of every 4th bar)
+  noise(0.09, 0.5, 1900, t - now + beat, musicGain);
+  noise(0.09, 0.5, 1900, t - now + beat * 3, musicGain);
+  if (bar % 4 === 3) {
+    noise(0.05, 0.3, 2200, t - now + beat * 3.5, musicGain);
+    noise(0.05, 0.35, 2400, t - now + beat * 3.75, musicGain);
+  }
+  // hats on eighths, offbeats louder
+  for (let i = 0; i < 8; i++) {
+    noise(0.03, i % 2 === 1 ? 0.16 : 0.09, 7000, t - now + i * step, musicGain);
+  }
+  // pumping bass: eighths with an octave jump on the last of each half
+  for (let i = 0; i < 8; i++) {
+    const f = bass * (i === 3 || i === 7 ? 2 : 1);
+    tone({ freq: f, type: 'sawtooth', dur: step * 0.85, vol: 0.4, delay: t - now + i * step, dest: musicGain });
+  }
+  // lead riff, transposed with the bar's root
+  const riff = RIFFS[bar % RIFFS.length];
+  const k = bass / 55;
+  for (let i = 0; i < 8; i++) {
+    const n = riff[i];
+    if (n < 0) continue;
+    tone({ freq: PENTA[n] * k, type: 'square', dur: step * 0.8, vol: 0.16, delay: t - now + i * step, dest: musicGain });
+  }
+}
+
 function startMusicLoop(): void {
   if (!ac || musicTimer !== null) return;
-  const barDur = 2.0; // seconds per bar
   let bar = 0;
   let nextBarTime = ac.currentTime + 0.1;
 
   const schedule = () => {
     if (!ac || !musicGain) return;
-    // keep ~2 bars scheduled ahead
-    while (nextBarTime < ac.currentTime + barDur * 2) {
-      const t = nextBarTime;
-      const bass = BASS[bar % BASS.length];
-      tone({ freq: bass, type: 'triangle', dur: barDur * 0.9, vol: 0.5, delay: t - ac.currentTime, dest: musicGain });
-      for (let i = 0; i < 8; i++) {
-        const f = ARP[(i + (bar % 2) * 4) % ARP.length] * (bass / 110);
-        tone({ freq: f, type: 'sine', dur: 0.22, vol: 0.3, delay: t - ac.currentTime + (i * barDur) / 8, dest: musicGain });
-      }
+    // keep ~2 bars scheduled ahead; bar length depends on the current mode
+    for (;;) {
+      const barDur = musicMode === 'combat' ? 1.6 : 2.0;
+      if (nextBarTime >= ac.currentTime + barDur * 2) break;
+      if (musicMode === 'combat') combatBar(nextBarTime, bar, barDur);
+      else calmBar(nextBarTime, bar, barDur);
       nextBarTime += barDur;
       bar++;
     }
   };
   schedule();
-  musicTimer = window.setInterval(schedule, 500);
+  musicTimer = window.setInterval(schedule, 400);
 }
