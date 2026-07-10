@@ -1,6 +1,6 @@
 import { Camera } from './core/camera';
 import { RunState } from './state';
-import { SIM_DT, MAX_STEPS } from './config';
+import { SIM_DT, MAX_STEPS, WORLD_ZOOM } from './config';
 import { initInput, getMouse, consumeClick, clearFrameKeys, setJoystickEnabled } from './core/input';
 import { WeaponInstance } from './entities/weapon';
 import { weaponById } from './data/weapons';
@@ -8,6 +8,8 @@ import { clearFx } from './render/fx';
 import { setMusicMode } from './render/audio';
 import type { UiInput } from './render/ui';
 import type { CharacterDef } from './data/characters';
+import { measureViewport, type ViewportMetrics } from './core/viewport';
+import { renderRotatePrompt } from './render/ui';
 
 export interface Scene {
   update(game: Game, dt: number): void;
@@ -24,6 +26,7 @@ const FADE_IN = 0.13;
 export class Game {
   canvas: HTMLCanvasElement;
   ctx: CanvasRenderingContext2D;
+  viewport: ViewportMetrics;
   camera = new Camera();
   state = new RunState();
   scene!: Scene;
@@ -40,14 +43,44 @@ export class Game {
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d')!;
-    initInput(canvas);
+    this.viewport = measureViewport();
+    initInput(canvas, () => this.viewport);
     const resize = () => {
-      this.canvas.width = window.innerWidth;
-      this.canvas.height = window.innerHeight;
-      this.camera.resize(this.canvas.width, this.canvas.height);
+      this.viewport = measureViewport();
+      const { width, height, pixelRatio } = this.viewport;
+      const backingW = Math.max(1, Math.round(width * pixelRatio));
+      const backingH = Math.max(1, Math.round(height * pixelRatio));
+      if (this.canvas.width !== backingW) this.canvas.width = backingW;
+      if (this.canvas.height !== backingH) this.canvas.height = backingH;
+      this.canvas.style.width = `${width}px`;
+      this.canvas.style.height = `${height}px`;
+      this.ctx.imageSmoothingEnabled = false;
+      const zoom = this.viewport.compactLandscape
+        ? WORLD_ZOOM * Math.max(2 / 3, Math.min(1, height / 420))
+        : WORLD_ZOOM;
+      this.camera.resize(width, height, zoom);
+      this.camera.follow(this.state.player.x, this.state.player.y);
     };
     window.addEventListener('resize', resize);
+    window.addEventListener('orientationchange', resize);
+    window.visualViewport?.addEventListener('resize', resize);
     resize();
+  }
+
+  get width(): number {
+    return this.viewport.width;
+  }
+
+  get height(): number {
+    return this.viewport.height;
+  }
+
+  private prepareContext(): void {
+    const dpr = this.viewport.pixelRatio;
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.ctx.globalAlpha = 1;
+    this.ctx.globalCompositeOperation = 'source-over';
+    this.ctx.imageSmoothingEnabled = false;
   }
 
   setScene(scene: Scene, instant = false): void {
@@ -104,18 +137,27 @@ export class Game {
       if (this.fadeT > 0) this.ui.clicked = false; // buttons can't fire through a fade
 
       let steps = 0;
-      while (this.acc >= SIM_DT && steps < MAX_STEPS) {
-        this.scene.update(this, SIM_DT);
-        this.acc -= SIM_DT;
-        steps++;
+      this.prepareContext();
+      if (this.viewport.portraitBlocked) {
+        setJoystickEnabled(false);
+        this.acc = 0;
+        this.ui.clicked = false;
+        clearFrameKeys();
+        renderRotatePrompt(this.ctx, this.width, this.height);
+      } else {
+        while (this.acc >= SIM_DT && steps < MAX_STEPS) {
+          this.scene.update(this, SIM_DT);
+          this.acc -= SIM_DT;
+          steps++;
+        }
+        if (steps === MAX_STEPS) this.acc = 0;
+        this.scene.render(this, this.ctx);
       }
-      if (steps === MAX_STEPS) this.acc = 0;
-
-      this.scene.render(this, this.ctx);
-      if (this.fadeT > 0) {
+      if (!this.viewport.portraitBlocked && this.fadeT > 0) {
+        this.prepareContext();
         const a = this.pendingScene ? this.fadeT / FADE_OUT : 1 - (this.fadeT - FADE_OUT) / FADE_IN;
         this.ctx.fillStyle = `rgba(8,8,14,${Math.min(1, Math.max(0, a)).toFixed(3)})`;
-        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+        this.ctx.fillRect(0, 0, this.width, this.height);
       }
       if (steps > 0) {
         this.ui.clicked = false;

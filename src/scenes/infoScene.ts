@@ -1,5 +1,5 @@
 import type { Game, Scene } from '../game';
-import { button, panel, sceneBackground } from '../render/ui';
+import { button, panel, responsiveScene, sceneBackground, type UiInput } from '../render/ui';
 import { drawIcon } from '../render/icons';
 import { t as tt } from '../core/i18n';
 import { menuScene } from './menu';
@@ -36,8 +36,10 @@ class InfoScene implements Scene {
   }
 
   render(game: Game, ctx: CanvasRenderingContext2D): void {
-    const w = game.canvas.width;
-    const h = game.canvas.height;
+    responsiveScene(ctx, game.ui, game.viewport, 1040, 620, (w, h, ui) => this.renderContent(ctx, w, h, ui));
+  }
+
+  private renderContent(ctx: CanvasRenderingContext2D, w: number, h: number, ui: UiInput): void {
     sceneBackground(ctx, w, h, '#1a1c28', '#0a0a10');
     ctx.textBaseline = 'middle';
 
@@ -101,7 +103,7 @@ class InfoScene implements Scene {
     ctx.fillText(tt('info.tip2'), rx + 20, ty + 72);
     ctx.fillText(tt('info.tip3'), rx + 20, ty + 94);
 
-    if (button(ctx, game.ui, 20, 20, 110, 42, tt('hero.back'))) this.back = true;
+    if (button(ctx, ui, 20, 20, 110, 42, tt('hero.back'))) this.back = true;
   }
 }
 

@@ -15,5 +15,5 @@ export const POOL_DMG_NUMBERS = 128;
 export const PICKUP_MERGE_CAP = 300;
 export const PLAYER_IFRAMES = 0.3;
 export const GRID_CELL = 64;
-/** Camera zoom: >1 makes the whole world (player, enemies, arena) look bigger. */
+/** Desktop/base camera zoom; short touch landscapes reduce it dynamically. */
 export const WORLD_ZOOM = 1.35;

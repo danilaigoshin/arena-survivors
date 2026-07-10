@@ -1,10 +1,10 @@
 import type { Game, Scene } from '../game';
 import { getWaveDef } from '../data/waves';
-import { FINAL_WAVE, ARENA_W, ARENA_H, WORLD_ZOOM } from '../config';
+import { FINAL_WAVE, ARENA_W, ARENA_H } from '../config';
 import { moveAxis, isDown, consumeKeyPress, isTouchDevice, pauseButtonCircle } from '../core/input';
 import { toggleMute, toggleMusic, isMuted, isMusicOn, setMusicIntensity } from '../render/audio';
 import { loadMeta } from '../core/save';
-import { button } from '../render/ui';
+import { button, dimBackground, fitToViewport, panel, renderFitted } from '../render/ui';
 import { norm, clamp } from '../utils/math';
 import { updateSpawner } from '../systems/spawner';
 import { updateEnemies } from '../systems/enemyAI';
@@ -26,7 +26,6 @@ import { updateFx } from '../render/fx';
 import { playSfx } from '../render/audio';
 import { renderWorld } from '../render/renderer';
 import { renderHud } from '../render/hud';
-import { panel, dimBackground } from '../render/ui';
 import { drawIcon, weaponIcon } from '../render/icons';
 import { STAT_LABELS, formatStatValue, type Stats } from '../entities/stats';
 import { shopScene } from './shopScene';
@@ -49,6 +48,9 @@ function drawPauseSlash(ctx: CanvasRenderingContext2D, x: number, y: number, w: 
 }
 
 const WAVE_END_DELAY = 1.2;
+const LEVEL_LAYOUT_W = 720;
+const LEVEL_LAYOUT_H = 340;
+const LEVEL_CARD_Y = 96;
 
 class RunScene implements Scene {
   wantsJoystick = true;
@@ -111,14 +113,18 @@ class RunScene implements Scene {
     game.camera.follow(s.player.x, s.player.y);
   }
 
-  private cardRect(game: Game, i: number, count: number): [number, number, number, number] {
-    const w = game.canvas.width;
-    const h = game.canvas.height;
+  private virtualCardRect(i: number, count: number): [number, number, number, number] {
     const cw = 210;
     const ch = 190;
     const gap = 24;
     const total = count * cw + (count - 1) * gap;
-    return [w / 2 - total / 2 + i * (cw + gap), h / 2 - ch / 2, cw, ch];
+    return [LEVEL_LAYOUT_W / 2 - total / 2 + i * (cw + gap), LEVEL_CARD_Y, cw, ch];
+  }
+
+  private cardRect(game: Game, i: number, count: number): [number, number, number, number] {
+    const layout = fitToViewport(game.viewport, LEVEL_LAYOUT_W, LEVEL_LAYOUT_H);
+    const [x, y, w, h] = this.virtualCardRect(i, count);
+    return [layout.x + x * layout.scale, layout.y + y * layout.scale, w * layout.scale, h * layout.scale];
   }
 
   update(game: Game, dt: number): void {
@@ -143,8 +149,8 @@ class RunScene implements Scene {
     }
     // touch: tap on the on-screen pause button
     if (isTouchDevice() && !this.paused && !this.levelUpChoices && game.ui.clicked) {
-      const pc = pauseButtonCircle(game.canvas.width);
-      if ((game.ui.mx - pc.x) ** 2 + (game.ui.my - pc.y) ** 2 <= pc.r * pc.r) {
+      const pc = pauseButtonCircle(game.viewport);
+      if ((game.ui.mx - pc.x) ** 2 + (game.ui.my - pc.y) ** 2 <= pc.hitR * pc.hitR) {
         game.ui.clicked = false;
         this.paused = true;
         playSfx('click');
@@ -422,19 +428,19 @@ class RunScene implements Scene {
   }
 
   render(game: Game, ctx: CanvasRenderingContext2D): void {
-    const w = game.canvas.width;
-    const h = game.canvas.height;
+    const w = game.width;
+    const h = game.height;
     ctx.fillStyle = '#0d0d12';
     ctx.fillRect(0, 0, w, h);
 
-    renderWorld(ctx, game.state, game.camera, performance.now() / 1000);
+    renderWorld(ctx, game.state, game.camera, performance.now() / 1000, w, h);
 
     // darkness vignette with a light pocket around the player
     const dk = game.state.theme.darkness;
     if (dk > 0) {
       const p = game.state.player;
-      const px = w / 2 + (p.x - game.camera.x) * WORLD_ZOOM;
-      const py = h / 2 + (p.y - game.camera.y) * WORLD_ZOOM;
+      const px = w / 2 + (p.x - game.camera.x) * game.camera.zoom;
+      const py = h / 2 + (p.y - game.camera.y) * game.camera.zoom;
       const g = ctx.createRadialGradient(px, py, 150, px, py, Math.max(w, h) * 0.72);
       g.addColorStop(0, 'rgba(0,0,0,0)');
       g.addColorStop(1, `rgba(0,0,0,${dk})`);
@@ -442,7 +448,7 @@ class RunScene implements Scene {
       ctx.fillRect(0, 0, w, h);
     }
 
-    renderHud(ctx, game.state, w, h);
+    renderHud(ctx, game.state, game.viewport);
 
     if (import.meta.env.DEV) {
       ctx.fillStyle = '#888';
@@ -455,8 +461,8 @@ class RunScene implements Scene {
     // newbie hints on the first-ever run
     if (this.hintTimer > 0 && !this.levelUpChoices && !this.paused) {
       const p = game.state.player;
-      const px = w / 2 + (p.x - game.camera.x) * WORLD_ZOOM;
-      const py = h / 2 + (p.y - game.camera.y) * WORLD_ZOOM;
+      const px = w / 2 + (p.x - game.camera.x) * game.camera.zoom;
+      const py = h / 2 + (p.y - game.camera.y) * game.camera.zoom;
       ctx.save();
       ctx.globalAlpha = Math.min(1, this.hintTimer / 1.5) * 0.85;
       ctx.textAlign = 'center';
@@ -491,46 +497,45 @@ class RunScene implements Scene {
       ctx.globalAlpha = ok;
       dimBackground(ctx, w, h);
       ctx.translate(0, (1 - ok) * 16);
-      const pw = 380;
-      const ph = 330;
-      panel(ctx, w / 2 - pw / 2, h / 2 - ph / 2, pw, ph, { radius: 18, glow: '#ffd23e44', border: '#ffd23e66' });
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.save();
-      ctx.shadowColor = '#ffd23e88';
-      ctx.shadowBlur = 16;
-      ctx.fillStyle = '#ffd23e';
-      ctx.font = displayFont(17);
-      ctx.fillText(t('chest.title'), w / 2, h / 2 - ph / 2 + 34);
-      ctx.restore();
+      const layout = fitToViewport(game.viewport, 400, 360);
+      renderFitted(ctx, game.ui, layout, (ow, _oh, ui) => {
+        const cx = ow / 2;
+        const pw = 380;
+        panel(ctx, 10, 15, pw, 330, { radius: 18, glow: '#ffd23e44', border: '#ffd23e66' });
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.save();
+        ctx.shadowColor = '#ffd23e88';
+        ctx.shadowBlur = 16;
+        ctx.fillStyle = '#ffd23e';
+        ctx.font = displayFont(17);
+        ctx.fillText(t('chest.title'), cx, 49);
+        ctx.restore();
 
-      const iconKey = r.kind === 'weapon' ? weaponIcon(r.weapon.id) : r.item.emoji;
-      const name = r.kind === 'weapon' ? tn('w', r.weapon.id, r.weapon.name) : tn('i', r.item.id, r.item.name);
-      drawIcon(ctx, iconKey, w / 2, h / 2 - 58, 52);
-      ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 20px system-ui, sans-serif';
-      ctx.fillText(name, w / 2, h / 2 - 8);
-      ctx.font = '13px system-ui, sans-serif';
-      if (r.kind === 'weapon') {
-        const mergeable = p.weapons.find((wi) => wi.def.id === r.weapon.id && wi.tier < MAX_TIER);
-        ctx.fillStyle = '#ccccdd';
-        ctx.fillText(mergeable ? t('chest.merge', TIER_NAMES[mergeable.tier]) : p.canAddWeapon() ? t('chest.newSlot') : t('chest.full'), w / 2, h / 2 + 18);
-      } else {
-        const mods = Object.entries(r.item.modifiers)
-          .map(([k, v]) => `${STAT_LABELS[k as keyof Stats]} ${formatStatValue(k as keyof Stats, v as number)}`)
-          .join(', ');
-        ctx.fillStyle = '#9fdca0';
-        ctx.fillText(mods, w / 2, h / 2 + 18);
-      }
+        const iconKey = r.kind === 'weapon' ? weaponIcon(r.weapon.id) : r.item.emoji;
+        const name = r.kind === 'weapon' ? tn('w', r.weapon.id, r.weapon.name) : tn('i', r.item.id, r.item.name);
+        drawIcon(ctx, iconKey, cx, 122, 52);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 20px system-ui, sans-serif';
+        ctx.fillText(name, cx, 172, pw - 36);
+        ctx.font = '13px system-ui, sans-serif';
+        if (r.kind === 'weapon') {
+          const mergeable = p.weapons.find((wi) => wi.def.id === r.weapon.id && wi.tier < MAX_TIER);
+          ctx.fillStyle = '#ccccdd';
+          ctx.fillText(mergeable ? t('chest.merge', TIER_NAMES[mergeable.tier]) : p.canAddWeapon() ? t('chest.newSlot') : t('chest.full'), cx, 198, pw - 36);
+        } else {
+          const mods = Object.entries(r.item.modifiers)
+            .map(([k, v]) => `${STAT_LABELS[k as keyof Stats]} ${formatStatValue(k as keyof Stats, v as number)}`)
+            .join(', ');
+          ctx.fillStyle = '#9fdca0';
+          ctx.fillText(mods, cx, 198, pw - 36);
+        }
 
-      const scrapValue = Math.max(1, Math.round((r.kind === 'weapon' ? r.weapon.price : r.item.basePrice) * 0.8));
-      const canTake = r.kind !== 'weapon' || p.canAddWeapon() || p.weapons.some((wi) => wi.def.id === r.weapon.id && wi.tier < MAX_TIER);
-      if (button(ctx, game.ui, w / 2 - pw / 2 + 24, h / 2 + 46, pw - 48, 48, t('chest.take'), { primary: true, enabled: canTake })) {
-        this.chestAction = 'take';
-      }
-      if (button(ctx, game.ui, w / 2 - pw / 2 + 24, h / 2 + 104, pw - 48, 40, t('chest.scrap', scrapValue), { icon: 'i_gem' })) {
-        this.chestAction = 'scrap';
-      }
+        const scrapValue = Math.max(1, Math.round((r.kind === 'weapon' ? r.weapon.price : r.item.basePrice) * 0.8));
+        const canTake = r.kind !== 'weapon' || p.canAddWeapon() || p.weapons.some((wi) => wi.def.id === r.weapon.id && wi.tier < MAX_TIER);
+        if (button(ctx, ui, 34, 226, pw - 48, 48, t('chest.take'), { primary: true, enabled: canTake })) this.chestAction = 'take';
+        if (button(ctx, ui, 34, 284, pw - 48, 40, t('chest.scrap', scrapValue), { icon: 'i_gem' })) this.chestAction = 'scrap';
+      });
       ctx.restore();
     }
 
@@ -540,22 +545,25 @@ class RunScene implements Scene {
       ctx.globalAlpha = ok;
       dimBackground(ctx, w, h);
       ctx.translate(0, (1 - ok) * 16);
-      panel(ctx, w / 2 - 180, h / 2 - 150, 360, 300, { radius: 18, glow: '#00000088' });
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillStyle = '#ffffff';
-      ctx.font = displayFont(20);
-      ctx.fillText(t('pause.title'), w / 2, h / 2 - 108);
-      // sound toggles
-      if (button(ctx, game.ui, w / 2 - 60, h / 2 - 70, 54, 44, '', { icon: 'i_sound' })) this.pauseAction = 'mute';
-      if (isMuted()) drawPauseSlash(ctx, w / 2 - 60, h / 2 - 70, 54, 44);
-      if (button(ctx, game.ui, w / 2 + 6, h / 2 - 70, 54, 44, '', { icon: 'i_music' })) this.pauseAction = 'music';
-      if (!isMusicOn()) drawPauseSlash(ctx, w / 2 + 6, h / 2 - 70, 54, 44);
-      if (button(ctx, game.ui, w / 2 - 130, h / 2 + 2, 260, 52, t('pause.resume'), { primary: true })) this.pauseAction = 'resume';
-      if (button(ctx, game.ui, w / 2 - 130, h / 2 + 66, 260, 44, t('pause.surrender'))) this.pauseAction = 'surrender';
-      ctx.fillStyle = '#667';
-      ctx.font = '13px system-ui, sans-serif';
-      ctx.fillText(isTouchDevice() ? t('pause.hintTouch') : t('pause.hint'), w / 2, h / 2 + 130);
+      const layout = fitToViewport(game.viewport, 400, 340);
+      renderFitted(ctx, game.ui, layout, (ow, _oh, ui) => {
+        const cx = ow / 2;
+        panel(ctx, 20, 20, 360, 300, { radius: 18, glow: '#00000088' });
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#ffffff';
+        ctx.font = displayFont(20);
+        ctx.fillText(t('pause.title'), cx, 62);
+        if (button(ctx, ui, 140, 100, 54, 44, '', { icon: 'i_sound' })) this.pauseAction = 'mute';
+        if (isMuted()) drawPauseSlash(ctx, 140, 100, 54, 44);
+        if (button(ctx, ui, 206, 100, 54, 44, '', { icon: 'i_music' })) this.pauseAction = 'music';
+        if (!isMusicOn()) drawPauseSlash(ctx, 206, 100, 54, 44);
+        if (button(ctx, ui, 70, 172, 260, 52, t('pause.resume'), { primary: true })) this.pauseAction = 'resume';
+        if (button(ctx, ui, 70, 236, 260, 44, t('pause.surrender'))) this.pauseAction = 'surrender';
+        ctx.fillStyle = '#667';
+        ctx.font = '13px system-ui, sans-serif';
+        ctx.fillText(isTouchDevice() ? t('pause.hintTouch') : t('pause.hint'), cx, 300);
+      });
       ctx.restore();
     }
 
@@ -583,47 +591,48 @@ class RunScene implements Scene {
       ctx.globalAlpha = ok;
       dimBackground(ctx, w, h);
       ctx.translate(0, (1 - ok) * 16);
-      ctx.save();
-      ctx.shadowColor = '#8dff9a66';
-      ctx.shadowBlur = 24;
-      ctx.fillStyle = '#8dff9a';
-      ctx.font = displayFont(20);
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(t('lvl.title'), w / 2, h / 2 - 160);
-      ctx.restore();
-      // restore() may bring back a leaked alignment (e.g. the fps counter's) — reset explicitly
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillStyle = '#aab';
-      ctx.font = '15px system-ui, sans-serif';
-      ctx.fillText(t('lvl.sub'), w / 2, h / 2 - 124);
-      for (let i = 0; i < this.levelUpChoices.length; i++) {
-        const u = this.levelUpChoices[i];
-        const [x, y, cw, ch] = this.cardRect(game, i, this.levelUpChoices.length);
-        const hover = game.ui.mx >= x && game.ui.mx <= x + cw && game.ui.my >= y && game.ui.my <= y + ch;
-        const rc = RARITY_COLORS[u.rarity - 1];
-        panel(ctx, x, y, cw, ch, {
-          radius: 14,
-          fill: hover ? ['#2c3c30', '#1c241e'] : ['#222234', '#181824'],
-          border: hover ? '#8dff9a' : rc,
-          glow: hover ? '#8dff9a55' : u.rarity > 1 ? `${rc}55` : undefined,
-        });
-        drawIcon(ctx, u.emoji, x + cw / 2, y + 44, 40);
-        ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 19px system-ui, sans-serif';
-        ctx.fillText(tn('u', u.id, u.name), x + cw / 2, y + 88);
-        ctx.fillStyle = rc;
-        ctx.font = 'bold 11px system-ui, sans-serif';
-        ctx.fillText(rarityName(u.rarity).toUpperCase(), x + cw / 2, y + 108);
-        ctx.font = '13px system-ui, sans-serif';
-        const entries = Object.entries(u.modifiers);
-        entries.forEach(([k, v], li) => {
-          const val = v as number;
-          ctx.fillStyle = val > 0 ? '#9fdca0' : '#e08a8a';
-          ctx.fillText(`${STAT_LABELS[k as keyof Stats]} ${formatStatValue(k as keyof Stats, val)}`, x + cw / 2, y + 128 + li * 17);
-        });
-      }
+      const layout = fitToViewport(game.viewport, LEVEL_LAYOUT_W, LEVEL_LAYOUT_H);
+      renderFitted(ctx, game.ui, layout, (ow, _oh, ui) => {
+        ctx.save();
+        ctx.shadowColor = '#8dff9a66';
+        ctx.shadowBlur = 24;
+        ctx.fillStyle = '#8dff9a';
+        ctx.font = displayFont(20);
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(t('lvl.title'), ow / 2, 28);
+        ctx.restore();
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#aab';
+        ctx.font = '15px system-ui, sans-serif';
+        ctx.fillText(t('lvl.sub'), ow / 2, 64);
+        for (let i = 0; i < this.levelUpChoices!.length; i++) {
+          const u = this.levelUpChoices![i];
+          const [x, y, cw, ch] = this.virtualCardRect(i, this.levelUpChoices!.length);
+          const hover = ui.mx >= x && ui.mx <= x + cw && ui.my >= y && ui.my <= y + ch;
+          const rc = RARITY_COLORS[u.rarity - 1];
+          panel(ctx, x, y, cw, ch, {
+            radius: 14,
+            fill: hover ? ['#2c3c30', '#1c241e'] : ['#222234', '#181824'],
+            border: hover ? '#8dff9a' : rc,
+            glow: hover ? '#8dff9a55' : u.rarity > 1 ? `${rc}55` : undefined,
+          });
+          drawIcon(ctx, u.emoji, x + cw / 2, y + 44, 40);
+          ctx.fillStyle = '#ffffff';
+          ctx.font = 'bold 19px system-ui, sans-serif';
+          ctx.fillText(tn('u', u.id, u.name), x + cw / 2, y + 88, cw - 16);
+          ctx.fillStyle = rc;
+          ctx.font = 'bold 11px system-ui, sans-serif';
+          ctx.fillText(rarityName(u.rarity).toUpperCase(), x + cw / 2, y + 108);
+          ctx.font = '13px system-ui, sans-serif';
+          Object.entries(u.modifiers).forEach(([k, v], li) => {
+            const val = v as number;
+            ctx.fillStyle = val > 0 ? '#9fdca0' : '#e08a8a';
+            ctx.fillText(`${STAT_LABELS[k as keyof Stats]} ${formatStatValue(k as keyof Stats, val)}`, x + cw / 2, y + 128 + li * 17, cw - 16);
+          });
+        }
+      });
       ctx.restore();
     }
   }

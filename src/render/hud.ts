@@ -9,9 +9,20 @@ import { isTouchDevice, getJoystick, abilityButtonCircle, pauseButtonCircle } fr
 import { TIER_NAMES, TIER_COLORS, TIER_COOLDOWN } from '../data/weapons';
 import { t } from '../core/i18n';
 import { displayFont } from './font';
+import type { ViewportMetrics } from '../core/viewport';
 
-export function renderHud(ctx: CanvasRenderingContext2D, state: RunState, viewW: number, viewH: number): void {
+export function renderHud(ctx: CanvasRenderingContext2D, state: RunState, viewport: ViewportMetrics): void {
   const p = state.player;
+  const hudScale = viewport.hudScale;
+  const offsetX = viewport.safe.left;
+  const offsetY = viewport.safe.top;
+  const usableW = viewport.width - viewport.safe.left - viewport.safe.right;
+  const usableH = viewport.height - viewport.safe.top - viewport.safe.bottom;
+  const viewW = usableW / hudScale;
+  const viewH = usableH / hudScale;
+  ctx.save();
+  ctx.translate(offsetX, offsetY);
+  ctx.scale(hudScale, hudScale);
   ctx.textBaseline = 'middle';
 
   // ── top-left: portrait + hp/xp ──
@@ -119,7 +130,10 @@ export function renderHud(ctx: CanvasRenderingContext2D, state: RunState, viewW:
   // ── ability: desktop slot (Space) or big touch button ──
   const ab = p.character.ability;
   if (touch) {
-    const c = abilityButtonCircle(viewW, viewH);
+    const c = abilityButtonCircle(viewport);
+    const cx = (c.x - offsetX) / hudScale;
+    const cy = (c.y - offsetY) / hudScale;
+    const cr = c.visualR / hudScale;
     const ready = p.abilityCd <= 0;
     ctx.save();
     if (ready) {
@@ -128,70 +142,77 @@ export function renderHud(ctx: CanvasRenderingContext2D, state: RunState, viewW:
     }
     ctx.fillStyle = '#14141ecc';
     ctx.beginPath();
-    ctx.arc(c.x, c.y, c.r, 0, Math.PI * 2);
+    ctx.arc(cx, cy, cr, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
     ctx.strokeStyle = ready ? '#8be9fdaa' : '#ffffff22';
     ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.arc(c.x, c.y, c.r, 0, Math.PI * 2);
+    ctx.arc(cx, cy, cr, 0, Math.PI * 2);
     ctx.stroke();
-    drawIcon(ctx, ab.icon, c.x, c.y, 40);
+    drawIcon(ctx, ab.icon, cx, cy, (viewport.compactLandscape ? 28 : 40) / hudScale);
     if (!ready) {
       // cooldown sweep
       ctx.fillStyle = '#000000a0';
       ctx.beginPath();
-      ctx.moveTo(c.x, c.y);
-      ctx.arc(c.x, c.y, c.r - 2, -Math.PI / 2, -Math.PI / 2 + (p.abilityCd / ab.cooldown) * Math.PI * 2);
+      ctx.moveTo(cx, cy);
+      ctx.arc(cx, cy, cr - 2 / hudScale, -Math.PI / 2, -Math.PI / 2 + (p.abilityCd / ab.cooldown) * Math.PI * 2);
       ctx.closePath();
       ctx.fill();
     }
     // виртуальный джойстик (пока палец на правой половине)
     const j = getJoystick();
     if (j.active) {
+      const jx = (j.baseX - offsetX) / hudScale;
+      const jy = (j.baseY - offsetY) / hudScale;
+      const jr = (viewport.compactLandscape ? 46 : 56) / hudScale;
       ctx.globalAlpha = 0.35;
       ctx.fillStyle = '#8be9fd';
       ctx.beginPath();
-      ctx.arc(j.baseX, j.baseY, 56, 0, Math.PI * 2);
+      ctx.arc(jx, jy, jr, 0, Math.PI * 2);
       ctx.fill();
       ctx.globalAlpha = 0.7;
       ctx.fillStyle = '#e8faff';
       ctx.beginPath();
-      ctx.arc(j.baseX + j.dx, j.baseY + j.dy, 24, 0, Math.PI * 2);
+      ctx.arc(jx + j.dx / hudScale, jy + j.dy / hudScale, (viewport.compactLandscape ? 20 : 24) / hudScale, 0, Math.PI * 2);
       ctx.fill();
       ctx.globalAlpha = 1;
     }
     // кнопка паузы
-    const pc = pauseButtonCircle(viewW);
+    const pc = pauseButtonCircle(viewport);
+    const pcx = (pc.x - offsetX) / hudScale;
+    const pcy = (pc.y - offsetY) / hudScale;
+    const pcr = pc.visualR / hudScale;
     ctx.fillStyle = '#14141ecc';
     ctx.beginPath();
-    ctx.arc(pc.x, pc.y, pc.r, 0, Math.PI * 2);
+    ctx.arc(pcx, pcy, pcr, 0, Math.PI * 2);
     ctx.fill();
     ctx.strokeStyle = '#ffffff33';
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.arc(pc.x, pc.y, pc.r, 0, Math.PI * 2);
+    ctx.arc(pcx, pcy, pcr, 0, Math.PI * 2);
     ctx.stroke();
     ctx.fillStyle = '#c8c8dc';
-    ctx.fillRect(pc.x - 7, pc.y - 8, 5, 16);
-    ctx.fillRect(pc.x + 2, pc.y - 8, 5, 16);
+    const pauseK = viewport.compactLandscape ? 0.82 / hudScale : 1;
+    ctx.fillRect(pcx - 7 * pauseK, pcy - 8 * pauseK, 5 * pauseK, 16 * pauseK);
+    ctx.fillRect(pcx + 2 * pauseK, pcy - 8 * pauseK, 5 * pauseK, 16 * pauseK);
   } else {
-  const ax = 14 + MAX_WEAPON_SLOTS * (slotSize + 8) + 10;
-  panel(ctx, ax, sy - 6, 52, 52, { radius: 12, fill: '#14141ecc', border: p.abilityCd <= 0 ? '#8be9fd88' : '#ffffff22', glow: p.abilityCd <= 0 ? '#8be9fd44' : undefined });
-  drawIcon(ctx, ab.icon, ax + 26, sy + 20, 28);
-  if (p.abilityCd > 0) {
-    const frac = p.abilityCd / ab.cooldown;
-    ctx.save();
-    roundRect(ctx, ax, sy - 6, 52, 52, 12);
-    ctx.clip();
-    ctx.fillStyle = '#000000a0';
-    ctx.fillRect(ax, sy - 6 + 52 * (1 - frac), 52, 52 * frac);
-    ctx.restore();
-  }
-  ctx.fillStyle = p.abilityCd <= 0 ? '#8be9fd' : '#667';
-  ctx.font = 'bold 10px system-ui, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('SPACE', ax + 26, sy + 54);
+    const ax = 14 + MAX_WEAPON_SLOTS * (slotSize + 8) + 10;
+    panel(ctx, ax, sy - 6, 52, 52, { radius: 12, fill: '#14141ecc', border: p.abilityCd <= 0 ? '#8be9fd88' : '#ffffff22', glow: p.abilityCd <= 0 ? '#8be9fd44' : undefined });
+    drawIcon(ctx, ab.icon, ax + 26, sy + 20, 28);
+    if (p.abilityCd > 0) {
+      const frac = p.abilityCd / ab.cooldown;
+      ctx.save();
+      roundRect(ctx, ax, sy - 6, 52, 52, 12);
+      ctx.clip();
+      ctx.fillStyle = '#000000a0';
+      ctx.fillRect(ax, sy - 6 + 52 * (1 - frac), 52, 52 * frac);
+      ctx.restore();
+    }
+    ctx.fillStyle = p.abilityCd <= 0 ? '#8be9fd' : '#667';
+    ctx.font = 'bold 10px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('SPACE', ax + 26, sy + 54);
   }
 
   // ── boss hp bar ──
@@ -201,7 +222,7 @@ export function renderHud(ctx: CanvasRenderingContext2D, state: RunState, viewW:
       if (e.active && e.isBoss) {
         const w = Math.min(560, viewW - 100);
         const x = (viewW - w) / 2;
-        const y = viewH - 46;
+        const y = viewH - (viewport.compactLandscape ? 92 : 46);
         drawSprite(ctx, e.def.id, x - 26, y + 10, 36);
         bar(ctx, x, y, w, 20, e.hp / e.maxHp, ['#d266e8', '#8a2bab'], t('hud.bossPct', Math.ceil((100 * e.hp) / e.maxHp)));
         break;
@@ -217,4 +238,5 @@ export function renderHud(ctx: CanvasRenderingContext2D, state: RunState, viewW:
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, viewW, viewH);
   }
+  ctx.restore();
 }

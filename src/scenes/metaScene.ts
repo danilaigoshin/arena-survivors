@@ -1,5 +1,5 @@
 import type { Game, Scene } from '../game';
-import { button, panel, sceneBackground } from '../render/ui';
+import { button, panel, responsiveScene, sceneBackground, type UiInput } from '../render/ui';
 import { drawIcon, weaponIcon } from '../render/icons';
 import { PERKS } from '../data/perks';
 import { WEAPONS } from '../data/weapons';
@@ -32,8 +32,10 @@ class MetaScene implements Scene {
   }
 
   render(game: Game, ctx: CanvasRenderingContext2D): void {
-    const w = game.canvas.width;
-    const h = game.canvas.height;
+    responsiveScene(ctx, game.ui, game.viewport, 1100, 620, (w, h, ui) => this.renderContent(game, ctx, w, h, ui));
+  }
+
+  private renderContent(game: Game, ctx: CanvasRenderingContext2D, w: number, h: number, ui: UiInput): void {
     sceneBackground(ctx, w, h, '#221c28', '#0d0a10');
     ctx.textBaseline = 'middle';
 
@@ -92,7 +94,7 @@ class MetaScene implements Scene {
       ctx.fillText(mods, x + CARD_W / 2, py + 118);
       const label = maxed ? tt('meta.maxed') : `${perk.costs[lvl]}`;
       if (
-        button(ctx, game.ui, x + 24, py + CARD_H - 48, CARD_W - 48, 34, label, {
+        button(ctx, ui, x + 24, py + CARD_H - 48, CARD_W - 48, 34, label, {
           enabled: !maxed && meta.shards >= perk.costs[lvl],
           icon: maxed ? undefined : 'i_shard',
         })
@@ -126,7 +128,7 @@ class MetaScene implements Scene {
       ctx.fillText(desc, x + CARD_W / 2, uy + 98);
       const label = owned ? tt('meta.opened') : `${wd.unlockCost}`;
       if (
-        button(ctx, game.ui, x + 24, uy + CARD_H - 30 - 48, CARD_W - 48, 34, label, {
+        button(ctx, ui, x + 24, uy + CARD_H - 30 - 48, CARD_W - 48, 34, label, {
           enabled: !owned && meta.shards >= wd.unlockCost!,
           icon: owned ? undefined : 'i_shard',
         })
@@ -142,7 +144,7 @@ class MetaScene implements Scene {
     ctx.textAlign = 'center';
     ctx.fillText(tt('meta.heroes'), w / 2, uy + CARD_H - 30 + 34);
 
-    if (button(ctx, game.ui, 20, 20, 110, 42, tt('hero.back'))) this.back = true;
+    if (button(ctx, ui, 20, 20, 110, 42, tt('hero.back'))) this.back = true;
   }
 }
 

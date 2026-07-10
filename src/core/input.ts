@@ -1,3 +1,5 @@
+import type { ViewportMetrics } from './viewport';
+
 const keys = new Set<string>();
 const justPressed = new Set<string>();
 let mouseX = 0;
@@ -22,6 +24,13 @@ const JOY_MAX = 58;
 /** virtual joystick, lives on the RIGHT half of the screen */
 const joy = { active: false, id: -1, baseX: 0, baseY: 0, dx: 0, dy: 0 };
 
+export interface TouchCircle {
+  x: number;
+  y: number;
+  visualR: number;
+  hitR: number;
+}
+
 export function isTouchDevice(): boolean {
   return touchMode;
 }
@@ -31,16 +40,28 @@ export function getJoystick(): { active: boolean; baseX: number; baseY: number; 
 }
 
 /** Ability button circle (bottom-left) — shared by the touch hit-test and the HUD. */
-export function abilityButtonCircle(_w: number, h: number): { x: number; y: number; r: number } {
-  return { x: 74, y: h - 78, r: 50 };
+export function abilityButtonCircle(viewport: ViewportMetrics): TouchCircle {
+  const visualR = viewport.compactLandscape ? Math.max(34, 50 * viewport.hudScale) : 50;
+  return {
+    x: viewport.safe.left + visualR + (viewport.compactLandscape ? 18 : 24),
+    y: viewport.height - viewport.safe.bottom - visualR - (viewport.compactLandscape ? 24 : 28),
+    visualR,
+    hitR: Math.max(22, visualR + 4),
+  };
 }
 
 /** Pause button circle (top, right of center) for touch. */
-export function pauseButtonCircle(w: number): { x: number; y: number; r: number } {
-  return { x: w / 2 + 150, y: 44, r: 26 };
+export function pauseButtonCircle(viewport: ViewportMetrics): TouchCircle {
+  const visualR = viewport.compactLandscape ? Math.max(18, 26 * viewport.hudScale) : 26;
+  return {
+    x: viewport.width / 2 + 150 * viewport.hudScale,
+    y: viewport.safe.top + (viewport.compactLandscape ? 32 : 44),
+    visualR,
+    hitR: Math.max(22, visualR),
+  };
 }
 
-export function initInput(canvas: HTMLCanvasElement): void {
+export function initInput(canvas: HTMLCanvasElement, getViewport: () => ViewportMetrics): void {
   window.addEventListener('keydown', (e) => {
     if (!e.repeat) justPressed.add(e.code);
     keys.add(e.code);
@@ -69,15 +90,16 @@ export function initInput(canvas: HTMLCanvasElement): void {
     (e) => {
       e.preventDefault();
       touchMode = true;
-      const w = window.innerWidth;
-      const h = window.innerHeight;
-      const ab = abilityButtonCircle(w, h);
-      const pc = pauseButtonCircle(w);
+      const viewport = getViewport();
+      if (viewport.portraitBlocked) return;
+      const w = viewport.width;
+      const ab = abilityButtonCircle(viewport);
+      const pc = pauseButtonCircle(viewport);
       for (const t of Array.from(e.changedTouches)) {
         // ability/pause circles and the joystick only exist during a run
-        if (joyEnabled && (t.clientX - ab.x) ** 2 + (t.clientY - ab.y) ** 2 <= ab.r * ab.r) {
+        if (joyEnabled && (t.clientX - ab.x) ** 2 + (t.clientY - ab.y) ** 2 <= ab.hitR * ab.hitR) {
           justPressed.add('Space');
-        } else if (joyEnabled && (t.clientX - pc.x) ** 2 + (t.clientY - pc.y) ** 2 <= pc.r * pc.r) {
+        } else if (joyEnabled && (t.clientX - pc.x) ** 2 + (t.clientY - pc.y) ** 2 <= pc.hitR * pc.hitR) {
           // pause button sits on the right half — must beat the joystick claim
           mouseX = t.clientX;
           mouseY = t.clientY;

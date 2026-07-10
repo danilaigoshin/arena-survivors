@@ -1,6 +1,6 @@
 import type { Game, Scene } from '../game';
 import { rollShop, reroll, effectivePrice, mergeTarget, type ShopState, type ShopOffer } from '../systems/shop';
-import { button, panel, inRect, sceneBackground, roundRect, type UiInput } from '../render/ui';
+import { button, panel, inRect, sceneBackground, roundRect, responsiveScene, type UiInput } from '../render/ui';
 import { drawIcon, weaponIcon } from '../render/icons';
 import { drawSprite } from '../render/sprites';
 import { STAT_LABELS, formatStatValue, type Stats } from '../entities/stats';
@@ -137,28 +137,16 @@ class ShopScene implements Scene {
     }
   }
 
+  private statsPanelHeight(game: Game): number {
+    const p = game.state.player;
+    const itemRows = Math.max(1, Math.ceil(Math.min(24, p.items.length || 1) / 6));
+    const sets = activeSetBonuses(p.weapons.map((wi) => wi.def.id));
+    return 100 + 5 * 26 + 16 + 76 + (sets.length > 0 ? 24 + sets.length * 34 : 0) + 30 + itemRows * 41 + 16;
+  }
+
   render(game: Game, ctx: CanvasRenderingContext2D): void {
-    const rw = game.canvas.width;
-    const rh = game.canvas.height;
-    // compact screens (phones): render the whole storefront scaled down, with
-    // pointer coords mapped into the same virtual space so hit tests still match
-    const scale = Math.min(1, rh / 620, rw / 1190);
-    if (scale >= 0.999) {
-      this.renderContent(game, ctx, rw, rh, game.ui);
-      return;
-    }
-    const ui = game.ui;
-    const vui = {
-      get mx() { return ui.mx / scale; },
-      get my() { return ui.my / scale; },
-      get down() { return ui.down; },
-      get clicked() { return ui.clicked; },
-      set clicked(v: boolean) { ui.clicked = v; },
-    } as UiInput;
-    ctx.save();
-    ctx.scale(scale, scale);
-    this.renderContent(game, ctx, rw / scale, rh / scale, vui);
-    ctx.restore();
+    const minHeight = Math.max(620, AWNING_H + 8 + this.statsPanelHeight(game) + ACTIONBAR_H);
+    responsiveScene(ctx, game.ui, game.viewport, 1190, minHeight, (w, h, ui) => this.renderContent(game, ctx, w, h, ui));
   }
 
   private renderContent(game: Game, ctx: CanvasRenderingContext2D, w: number, h: number, ui: UiInput): void {
@@ -568,9 +556,8 @@ class ShopScene implements Scene {
   private renderStatsPanel(game: Game, ctx: CanvasRenderingContext2D, x: number, h: number, ui: UiInput): void {
     const p = game.state.player;
     const pw = PANEL_W;
-    const itemRows = Math.max(1, Math.ceil(Math.min(24, p.items.length || 1) / 6));
     const sets = activeSetBonuses(p.weapons.map((wi) => wi.def.id));
-    const ph = 100 + 5 * 26 + 16 + 76 + (sets.length > 0 ? 24 + sets.length * 34 : 0) + 30 + itemRows * 41 + 16;
+    const ph = this.statsPanelHeight(game);
     const availTop = AWNING_H + 8;
     const availH = h - ACTIONBAR_H - availTop;
     const y = Math.max(availTop, availTop + (availH - ph) / 2);

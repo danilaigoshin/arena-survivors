@@ -1,5 +1,5 @@
 import type { Game, Scene } from '../game';
-import { button, sceneBackground } from '../render/ui';
+import { button, responsiveScene, sceneBackground, type UiInput } from '../render/ui';
 import { drawSprite, drawShadow } from '../render/sprites';
 import { CHARACTERS } from '../data/characters';
 import { ensureAudio, toggleMute, toggleMusic, isMuted, isMusicOn } from '../render/audio';
@@ -61,8 +61,10 @@ class MenuScene implements Scene {
   }
 
   render(game: Game, ctx: CanvasRenderingContext2D): void {
-    const w = game.canvas.width;
-    const h = game.canvas.height;
+    responsiveScene(ctx, game.ui, game.viewport, 1000, 560, (w, h, ui) => this.renderContent(game, ctx, w, h, ui));
+  }
+
+  private renderContent(game: Game, ctx: CanvasRenderingContext2D, w: number, h: number, ui: UiInput): void {
     const t = performance.now() / 1000;
     sceneBackground(ctx, w, h, '#1c1a28', '#0a0a10');
 
@@ -144,11 +146,11 @@ class MenuScene implements Scene {
 
     // button stack
     const by = h * 0.45;
-    if (button(ctx, game.ui, w / 2 - 140, by, 280, 62, tt('menu.play'), { primary: true, fontSize: 21 })) {
+    if (button(ctx, ui, w / 2 - 140, by, 280, 62, tt('menu.play'), { primary: true, fontSize: 21 })) {
       this.goCharSelect = true;
     }
     const shards = loadMeta().shards;
-    if (button(ctx, game.ui, w / 2 - 140, by + 76, 280, 48, tt('menu.workshop', shards), { icon: 'i_shard' })) {
+    if (button(ctx, ui, w / 2 - 140, by + 76, 280, 48, tt('menu.workshop', shards), { icon: 'i_shard' })) {
       this.goMeta = true;
     }
 
@@ -186,22 +188,22 @@ class MenuScene implements Scene {
     });
 
     // sound toggles + info: pixel icons, red slash when off
-    if (button(ctx, game.ui, w - 174, 16, 48, 40, '?', { fontSize: 19 })) this.goInfo = true;
-    if (button(ctx, game.ui, w - 118, 16, 48, 40, '', { icon: 'i_sound' })) this.toggles.mute = true;
+    if (button(ctx, ui, w - 174, 16, 48, 40, '?', { fontSize: 19 })) this.goInfo = true;
+    if (button(ctx, ui, w - 118, 16, 48, 40, '', { icon: 'i_sound' })) this.toggles.mute = true;
     if (isMuted()) drawSlash(ctx, w - 118, 16, 48, 40);
-    if (button(ctx, game.ui, w - 62, 16, 48, 40, '', { icon: 'i_music' })) this.toggles.music = true;
+    if (button(ctx, ui, w - 62, 16, 48, 40, '', { icon: 'i_music' })) this.toggles.music = true;
     if (!isMusicOn()) drawSlash(ctx, w - 62, 16, 48, 40);
 
     // language dropdown (drawn last so the open list sits on top)
     const lx = w - 244;
-    if (button(ctx, game.ui, lx, 16, 62, 40, getLang().toUpperCase(), { fontSize: 13, icon: 'i_lang' })) {
+    if (button(ctx, ui, lx, 16, 62, 40, getLang().toUpperCase(), { fontSize: 13, icon: 'i_lang' })) {
       this.langOpen = !this.langOpen;
     }
     if (this.langOpen) {
       LANGS.forEach((l, i) => {
         const y = 62 + i * 44;
         const active = l.code === getLang();
-        if (button(ctx, game.ui, lx - 40, y, 102, 40, l.native, { fontSize: 14, primary: active })) {
+        if (button(ctx, ui, lx - 40, y, 102, 40, l.native, { fontSize: 14, primary: active })) {
           setLang(l.code);
           this.langOpen = false;
         }

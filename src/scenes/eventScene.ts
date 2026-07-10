@@ -1,5 +1,5 @@
 import type { Game, Scene } from '../game';
-import { button, panel, sceneBackground } from '../render/ui';
+import { button, panel, responsiveScene, sceneBackground, type UiInput } from '../render/ui';
 import { drawIcon, weaponIcon } from '../render/icons';
 import { rollChestLoot, type ShopOffer } from '../systems/shop';
 import { ITEMS, type ItemDef } from '../data/items';
@@ -92,8 +92,10 @@ class EventScene implements Scene {
   }
 
   render(game: Game, ctx: CanvasRenderingContext2D): void {
-    const w = game.canvas.width;
-    const h = game.canvas.height;
+    responsiveScene(ctx, game.ui, game.viewport, 520, 460, (w, h, ui) => this.renderContent(game, ctx, w, h, ui));
+  }
+
+  private renderContent(game: Game, ctx: CanvasRenderingContext2D, w: number, h: number, ui: UiInput): void {
     const isChest = this.kind === 'chest';
     sceneBackground(ctx, w, h, isChest ? '#221c14' : '#22141c', '#0a0a10');
     ctx.textBaseline = 'middle';
@@ -124,8 +126,8 @@ class EventScene implements Scene {
         const p = game.state.player;
         const canTake = r.kind !== 'weapon' || p.canAddWeapon() || p.weapons.some((wi) => wi.def.id === r.weapon.id && wi.tier < MAX_TIER);
         const scrapV = Math.max(1, Math.round((r.kind === 'weapon' ? r.weapon.price : r.item.basePrice) * 0.8));
-        if (button(ctx, game.ui, w / 2 - 190, h / 2 + 44, 180, 46, tt('chest.take'), { primary: true, enabled: canTake })) this.action = 'take';
-        if (button(ctx, game.ui, w / 2 + 10, h / 2 + 44, 180, 46, `+${scrapV}`, { icon: 'i_gem' })) this.action = 'scrap';
+        if (button(ctx, ui, w / 2 - 190, h / 2 + 44, 180, 46, tt('chest.take'), { primary: true, enabled: canTake })) this.action = 'take';
+        if (button(ctx, ui, w / 2 + 10, h / 2 + 44, 180, 46, `+${scrapV}`, { icon: 'i_gem' })) this.action = 'scrap';
       }
     } else if (!isChest && this.altarItem) {
       drawIcon(ctx, this.altarItem.emoji, w / 2, h / 2 - 70, 46);
@@ -143,8 +145,8 @@ class EventScene implements Scene {
         ctx.fillStyle = '#e08a8a';
         ctx.font = 'bold 14px system-ui, sans-serif';
         ctx.fillText(tt('ev.price', cost), w / 2, h / 2 + 24);
-        if (button(ctx, game.ui, w / 2 - 190, h / 2 + 48, 180, 46, tt('ev.sacrifice'), { primary: true })) this.action = 'sacrifice';
-        if (button(ctx, game.ui, w / 2 + 10, h / 2 + 48, 180, 46, tt('ev.refuse'))) this.action = 'refuse';
+        if (button(ctx, ui, w / 2 - 190, h / 2 + 48, 180, 46, tt('ev.sacrifice'), { primary: true })) this.action = 'sacrifice';
+        if (button(ctx, ui, w / 2 + 10, h / 2 + 48, 180, 46, tt('ev.refuse'))) this.action = 'refuse';
       }
     }
 
@@ -152,7 +154,7 @@ class EventScene implements Scene {
       ctx.fillStyle = '#9fdca0';
       ctx.font = 'bold 15px system-ui, sans-serif';
       ctx.fillText(this.resultText, w / 2, h / 2 + 70);
-      if (button(ctx, game.ui, w / 2 - 130, h / 2 + 106, 260, 52, tt('shop.fight'), { primary: true })) this.action = 'go';
+      if (button(ctx, ui, w / 2 - 130, h / 2 + 106, 260, 52, tt('shop.fight'), { primary: true })) this.action = 'go';
     }
   }
 }

@@ -4,13 +4,15 @@ import { clamp } from '../utils/math';
 export class Camera {
   x = ARENA_W / 2;
   y = ARENA_H / 2;
+  zoom = WORLD_ZOOM;
   /** viewport size in WORLD units (canvas pixels / zoom) */
   viewW = 0;
   viewH = 0;
 
-  resize(w: number, h: number): void {
-    this.viewW = w / WORLD_ZOOM;
-    this.viewH = h / WORLD_ZOOM;
+  resize(w: number, h: number, zoom = WORLD_ZOOM): void {
+    this.zoom = zoom;
+    this.viewW = w / zoom;
+    this.viewH = h / zoom;
   }
 
   follow(tx: number, ty: number): void {
@@ -20,15 +22,15 @@ export class Camera {
   }
 
   applyTransform(ctx: CanvasRenderingContext2D): void {
-    ctx.scale(WORLD_ZOOM, WORLD_ZOOM);
+    ctx.scale(this.zoom, this.zoom);
     ctx.translate(Math.round(this.viewW / 2 - this.x), Math.round(this.viewH / 2 - this.y));
   }
 
   screenToWorldX(sx: number): number {
-    return sx / WORLD_ZOOM - (this.viewW / 2 - this.x);
+    return sx / this.zoom - (this.viewW / 2 - this.x);
   }
 
   screenToWorldY(sy: number): number {
-    return sy / WORLD_ZOOM - (this.viewH / 2 - this.y);
+    return sy / this.zoom - (this.viewH / 2 - this.y);
   }
 }

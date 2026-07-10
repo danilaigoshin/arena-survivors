@@ -1,6 +1,6 @@
 import type { Game, Scene } from '../game';
 import { CHARACTERS, type CharacterDef } from '../data/characters';
-import { button, panel, bar, sceneBackground, inRect, roundRect, type UiInput } from '../render/ui';
+import { button, panel, bar, sceneBackground, inRect, roundRect, responsiveScene, type UiInput } from '../render/ui';
 import { DIFFICULTIES, loadDifficulty, saveDifficulty } from '../data/difficulty';
 import { drawSprite, drawShadow } from '../render/sprites';
 import { drawIcon, weaponIcon } from '../render/icons';
@@ -64,26 +64,7 @@ class CharSelectScene implements Scene {
   }
 
   render(game: Game, ctx: CanvasRenderingContext2D): void {
-    const rw = game.canvas.width;
-    const rh = game.canvas.height;
-    // compact screens: render scaled with virtual pointer coords (same pattern as the shop)
-    const scale = Math.min(1, rh / 620, rw / 1190);
-    if (scale >= 0.999) {
-      this.renderContent(game, ctx, rw, rh, game.ui);
-      return;
-    }
-    const ui = game.ui;
-    const vui = {
-      get mx() { return ui.mx / scale; },
-      get my() { return ui.my / scale; },
-      get down() { return ui.down; },
-      get clicked() { return ui.clicked; },
-      set clicked(v: boolean) { ui.clicked = v; },
-    } as UiInput;
-    ctx.save();
-    ctx.scale(scale, scale);
-    this.renderContent(game, ctx, rw / scale, rh / scale, vui);
-    ctx.restore();
+    responsiveScene(ctx, game.ui, game.viewport, 1190, 620, (w, h, ui) => this.renderContent(game, ctx, w, h, ui));
   }
 
   private renderContent(game: Game, ctx: CanvasRenderingContext2D, w: number, h: number, ui: UiInput): void {

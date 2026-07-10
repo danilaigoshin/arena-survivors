@@ -1,5 +1,5 @@
 import type { Game, Scene } from '../game';
-import { button, panel, sceneBackground } from '../render/ui';
+import { button, panel, responsiveScene, sceneBackground, type UiInput } from '../render/ui';
 import { drawIcon } from '../render/icons';
 import { drawSprite, drawShadow } from '../render/sprites';
 import { playSfx } from '../render/audio';
@@ -53,8 +53,10 @@ class EndScene implements Scene {
   }
 
   render(game: Game, ctx: CanvasRenderingContext2D): void {
-    const w = game.canvas.width;
-    const h = game.canvas.height;
+    responsiveScene(ctx, game.ui, game.viewport, 520, 480, (w, h, ui) => this.renderContent(ctx, w, h, ui));
+  }
+
+  private renderContent(ctx: CanvasRenderingContext2D, w: number, h: number, ui: UiInput): void {
     const t = performance.now() / 1000;
     sceneBackground(ctx, w, h, this.won ? '#14241a' : '#241418', '#0a0a10');
 
@@ -124,14 +126,14 @@ class EndScene implements Scene {
 
     ctx.textAlign = 'center';
     if (this.canContinue) {
-      if (button(ctx, game.ui, cx - 180, h / 2 + 76, 360, 52, tt('end.endless'), { primary: true })) {
+      if (button(ctx, ui, cx - 180, h / 2 + 76, 360, 52, tt('end.endless'), { primary: true })) {
         this.action = 'endless';
       }
-      if (button(ctx, game.ui, cx - 180, h / 2 + 138, 170, 44, tt('end.retry'))) this.action = 'retry';
-      if (button(ctx, game.ui, cx + 10, h / 2 + 138, 170, 44, tt('end.menu'))) this.action = 'menu';
+      if (button(ctx, ui, cx - 180, h / 2 + 138, 170, 44, tt('end.retry'))) this.action = 'retry';
+      if (button(ctx, ui, cx + 10, h / 2 + 138, 170, 44, tt('end.menu'))) this.action = 'menu';
     } else {
-      if (button(ctx, game.ui, cx - 180, h / 2 + 80, 170, 52, tt('end.retry'), { primary: true })) this.action = 'retry';
-      if (button(ctx, game.ui, cx + 10, h / 2 + 80, 170, 52, tt('end.menu'))) this.action = 'menu';
+      if (button(ctx, ui, cx - 180, h / 2 + 80, 170, 52, tt('end.retry'), { primary: true })) this.action = 'retry';
+      if (button(ctx, ui, cx + 10, h / 2 + 80, 170, 52, tt('end.menu'))) this.action = 'menu';
     }
 
     ctx.fillStyle = '#667';

@@ -76,7 +76,7 @@ function drawAmbient(ctx: CanvasRenderingContext2D, state: RunState, cam: Camera
   ctx.globalAlpha = 1;
 }
 
-export function renderWorld(ctx: CanvasRenderingContext2D, state: RunState, cam: Camera, time: number): void {
+export function renderWorld(ctx: CanvasRenderingContext2D, state: RunState, cam: Camera, time: number, viewW: number, viewH: number): void {
   ctx.save();
   cam.applyTransform(ctx);
   ctx.translate(shakeOffsetX(time) + kickOffsetX(), shakeOffsetY(time) + kickOffsetY());
@@ -324,7 +324,7 @@ export function renderWorld(ctx: CanvasRenderingContext2D, state: RunState, cam:
     ctx.save();
     ctx.globalAlpha = 0.055;
     ctx.fillStyle = state.theme.grade;
-    ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    ctx.fillRect(0, 0, viewW, viewH);
     ctx.restore();
   }
 }
