@@ -1,4 +1,4 @@
-import { tierOrbBonus, type WeaponDef, type Tier } from '../data/weapons';
+import { tierChainBonus, tierOrbBonus, type WeaponDef, type Tier } from '../data/weapons';
 
 export class WeaponInstance {
   def: WeaponDef;
@@ -14,6 +14,11 @@ export class WeaponInstance {
   // melee swipe visual
   swipeTimer = 0;
   swipeAngle = 0;
+  /** Short-lived chain-lightning path: player origin + up to six targets. */
+  chainFxTimer = 0;
+  chainFxPointCount = 0;
+  readonly chainFxX = new Float32Array(7);
+  readonly chainFxY = new Float32Array(7);
   slotIndex = 0;
 
   constructor(def: WeaponDef, slotIndex: number) {
@@ -26,4 +31,8 @@ export class WeaponInstance {
 /** Orbit weapons gain extra orbs at higher tiers. */
 export function weaponOrbCount(w: WeaponInstance): number {
   return (w.def.orbit?.orbCount ?? 0) + tierOrbBonus(w.tier);
+}
+
+export function weaponChainTargetCount(w: WeaponInstance): number {
+  return (w.def.chain?.targets ?? 0) + tierChainBonus(w.tier);
 }

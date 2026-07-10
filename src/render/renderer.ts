@@ -8,6 +8,66 @@ import { shakeOffsetX, shakeOffsetY, kickOffsetX, kickOffsetY } from './fx';
 import { drawFx } from './fx';
 import { drawLiveDecor } from './floor';
 
+const CHAIN_FX_DUR = 0.14;
+
+function traceLightningPath(
+  ctx: CanvasRenderingContext2D,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  seed: number,
+  time: number,
+): void {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const len = Math.max(1, Math.hypot(dx, dy));
+  const nx = -dy / len;
+  const ny = dx / len;
+  const steps = Math.max(3, Math.min(8, Math.ceil(len / 32)));
+  const flicker = Math.floor(time * 90);
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  for (let i = 1; i < steps; i++) {
+    const t = i / steps;
+    const envelope = Math.sin(t * Math.PI);
+    const jitter = Math.sin(seed * 13.7 + i * 8.3 + flicker * 2.1) * 7 * envelope;
+    ctx.lineTo(x1 + dx * t + nx * jitter, y1 + dy * t + ny * jitter);
+  }
+  ctx.lineTo(x2, y2);
+}
+
+function drawChainLightning(ctx: CanvasRenderingContext2D, w: WeaponInstance, time: number): void {
+  if (w.chainFxTimer <= 0 || w.chainFxPointCount < 2) return;
+  const evolved = w.def.id === 'thunderstaff';
+  const outer = evolved ? '#6ec8e8' : '#b18cff';
+  const inner = evolved ? '#ffffff' : '#efe5ff';
+  const alpha = Math.min(1, w.chainFxTimer / CHAIN_FX_DUR);
+
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  for (let pass = 0; pass < 2; pass++) {
+    ctx.globalAlpha = alpha * (pass === 0 ? 0.72 : 1);
+    ctx.strokeStyle = pass === 0 ? outer : inner;
+    ctx.lineWidth = pass === 0 ? (evolved ? 6 : 5) : 1.7;
+    ctx.shadowColor = outer;
+    ctx.shadowBlur = pass === 0 ? 14 : 5;
+    for (let i = 1; i < w.chainFxPointCount; i++) {
+      traceLightningPath(ctx, w.chainFxX[i - 1], w.chainFxY[i - 1], w.chainFxX[i], w.chainFxY[i], i + w.slotIndex * 7, time);
+      ctx.stroke();
+    }
+  }
+  ctx.fillStyle = inner;
+  ctx.globalAlpha = alpha;
+  for (let i = 1; i < w.chainFxPointCount; i++) {
+    ctx.beginPath();
+    ctx.arc(w.chainFxX[i], w.chainFxY[i], evolved ? 3.5 : 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
 function drawFloor(ctx: CanvasRenderingContext2D, state: RunState): void {
   const theme = state.theme;
   if (state.floorCanvas) {
@@ -222,8 +282,9 @@ export function renderWorld(ctx: CanvasRenderingContext2D, state: RunState, cam:
   drawSecondHand(ctx, state, time);
   drawHeldWeapon(ctx, state, time);
 
-  // weapon visuals: melee swipes + orbit orbs
+  // weapon visuals: chain lightning, melee swipes + orbit orbs
   for (const w of p.weapons) {
+    drawChainLightning(ctx, w, time);
     if (w.def.behavior === 'melee' && w.swipeTimer > 0 && w.def.melee) {
       const t = 1 - w.swipeTimer / 0.18;
       const half = w.def.melee.arcRad / 2;
@@ -376,6 +437,8 @@ const BULLET_STYLES: Record<string, BulletStyle> = {
   railgun: { len: 26, w: 3.6, body: '#c8ecff', glow: '#4f9cf0', blur: 12, trail: 0.06, trailAlpha: 0.5 },
   // шквал: мелкая циановая дробь
   stormgun: { len: 8, w: 3, body: '#d8fbff', glow: '#6ec8e8', blur: 6, trail: 0.045, trailAlpha: 0.4 },
+  staff: { len: 10, w: 4, body: '#efe5ff', glow: '#b18cff', blur: 10, trail: 0, trailAlpha: 0 },
+  thunderstaff: { len: 12, w: 4.5, body: '#ffffff', glow: '#6ec8e8', blur: 14, trail: 0, trailAlpha: 0 },
 };
 
 const HELD_SPRITES: Record<string, string> = {
@@ -386,6 +449,8 @@ const HELD_SPRITES: Record<string, string> = {
   railgun: 'w_railgun',
   stormgun: 'w_stormgun',
   stormblade: 'w_stormblade',
+  staff: 'w_staff',
+  thunderstaff: 'w_thunderstaff',
   deathsting: 'w_deathsting',
   annihilator: 'w_annihilator',
   hurricane: 'w_hurricane',
@@ -396,9 +461,9 @@ function heldWeapons(p: RunState['player']): WeaponInstance[] {
   return p.weapons.filter((wi) => HELD_SPRITES[wi.def.id]);
 }
 
-/** Muzzle flash in the weapon's local (translated+rotated) space. */
+/** Muzzle/cast flash in the weapon's local (translated+rotated) space. */
 function drawMuzzleFlash(ctx: CanvasRenderingContext2D, img: HTMLCanvasElement, w: WeaponInstance, time: number): void {
-  if (w.recoil <= 0.6 || w.def.behavior !== 'projectile') return;
+  if (w.recoil <= 0.6 || (w.def.behavior !== 'projectile' && w.def.behavior !== 'chain')) return;
   const flash = (w.recoil - 0.6) / 0.4;
   const st = BULLET_STYLES[w.def.id] ?? BULLET_STYLES.default;
   ctx.translate(img.width * 0.78, 0);

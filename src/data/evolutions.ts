@@ -13,6 +13,7 @@ export const EVOLUTIONS: readonly EvolutionDef[] = [
   { base: 'orbs', catalyst: 'crown', result: 'singularity' },
   { base: 'crossbow', catalyst: 'katana_oil', result: 'deathsting' },
   { base: 'flail', catalyst: 'shield', result: 'doomflail' },
+  { base: 'staff', catalyst: 'grimoire', result: 'thunderstaff' },
   // ultra tier: evolve the evolutions once the endless grind begins
   { base: 'railgun', catalyst: 'battery', result: 'annihilator', minWave: 20 },
   { base: 'stormgun', catalyst: 'coffee', result: 'hurricane', minWave: 20 },

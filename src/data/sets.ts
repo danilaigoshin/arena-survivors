@@ -21,6 +21,8 @@ export const WEAPON_CLASS: Record<string, WeaponClassId> = {
   stormblade: 'blade',
   flail: 'blade',
   orbs: 'arcane',
+  staff: 'arcane',
+  thunderstaff: 'arcane',
   singularity: 'arcane',
   deathsting: 'gunner',
   annihilator: 'gunner',

@@ -523,6 +523,15 @@ class ShopScene implements Scene {
       lines.push([tt('tt.hitCd'), `${d.orbit.hitCooldown}s`]);
       lines.push([tt('tt.orbs'), tt('tt.orbsMore', d.orbit.orbCount)]);
       lines.push([tt('tt.orbitR'), `${d.orbit.radius}`]);
+    } else if (d.behavior === 'chain' && d.chain) {
+      const cd = d.cooldown / aspd;
+      lines.push([tt('tt.dmg'), `${dmg}`]);
+      lines.push([tt('tt.cd'), `${cd.toFixed(2)}s`]);
+      lines.push([tt('tt.dps'), `≈${Math.round(dmg / cd)}`]);
+      lines.push([tt('tt.range'), `${d.range}`]);
+      lines.push([tt('tt.targets'), d.evolved ? `${d.chain.targets}` : tt('tt.chainTargetsMore', d.chain.targets)]);
+      lines.push([tt('tt.jumpRange'), `${d.chain.jumpRange}`]);
+      lines.push([tt('tt.falloff'), tt('tt.perJump', Math.round((1 - d.chain.falloff) * 100))]);
     }
     const cls = CLASS_DEFS[WEAPON_CLASS[d.id]];
     if (cls) lines.push([tt('tt.class'), tn('s', cls.id, cls.name)]);

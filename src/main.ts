@@ -3,8 +3,13 @@ import { menuScene } from './scenes/menu';
 import { toggleMute } from './render/audio';
 import { loadFonts } from './render/font';
 import { runScene } from './scenes/run';
+import { validateSprites } from './render/sprites';
 
 loadFonts();
+if (import.meta.env.DEV) {
+  const spriteProblems = validateSprites();
+  if (spriteProblems.length > 0) throw new Error(`Invalid pixel sprites:\n${spriteProblems.join('\n')}`);
+}
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const game = new Game(canvas);
 game.setScene(menuScene);

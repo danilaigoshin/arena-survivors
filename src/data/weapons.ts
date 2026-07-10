@@ -1,4 +1,4 @@
-export type WeaponBehavior = 'projectile' | 'melee' | 'orbit';
+export type WeaponBehavior = 'projectile' | 'melee' | 'orbit' | 'chain';
 
 export interface WeaponDef {
   id: string;
@@ -16,6 +16,7 @@ export interface WeaponDef {
   projectile?: { speed: number; pierce: number; count: number; spreadRad: number };
   melee?: { arcRad: number; knockback: number };
   orbit?: { orbCount: number; radius: number; angularSpeed: number; hitCooldown: number };
+  chain?: { targets: number; jumpRange: number; falloff: number };
 }
 
 export type Tier = 1 | 2 | 3 | 4;
@@ -27,6 +28,11 @@ export const TIER_COLORS = ['#9a9aa8', '#4f9cf0', '#b13be0', '#f0a03c'];
 
 /** Orbit weapons gain an extra orb at tiers III and IV. */
 export function tierOrbBonus(tier: Tier): number {
+  return tier >= 4 ? 2 : tier >= 3 ? 1 : 0;
+}
+
+/** Chain weapons gain one extra target at tier III and another at tier IV. */
+export function tierChainBonus(tier: Tier): number {
   return tier >= 4 ? 2 : tier >= 3 ? 1 : 0;
 }
 
@@ -74,6 +80,17 @@ export const WEAPONS: readonly WeaponDef[] = [
     range: 0,
     price: 30,
     orbit: { orbCount: 2, radius: 85, angularSpeed: 2.6, hitCooldown: 0.5 },
+  },
+  {
+    id: 'staff',
+    name: 'Посох',
+    emoji: '🪄',
+    behavior: 'chain',
+    damage: 15,
+    cooldown: 1.2,
+    range: 500,
+    price: 24,
+    chain: { targets: 3, jumpRange: 150, falloff: 0.7 },
   },
 
   // ── unlockable via meta progression ───────────────────────
@@ -126,6 +143,18 @@ export const WEAPONS: readonly WeaponDef[] = [
     price: 0,
     evolved: true,
     orbit: { orbCount: 2, radius: 145, angularSpeed: 4.0, hitCooldown: 0.4 },
+  },
+  {
+    id: 'thunderstaff',
+    name: 'Грозовой посох',
+    emoji: '🌩️',
+    behavior: 'chain',
+    damage: 55,
+    cooldown: 0.72,
+    range: 620,
+    price: 0,
+    evolved: true,
+    chain: { targets: 6, jumpRange: 210, falloff: 0.82 },
   },
   // ── ultra evolutions (endless only, wave 20+) ─────────────
   {

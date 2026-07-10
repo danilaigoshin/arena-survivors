@@ -2,7 +2,7 @@ import type { RunState } from '../state';
 import type { Enemy } from '../entities/enemy';
 import { TIER_DAMAGE, TIER_COOLDOWN } from '../data/weapons';
 import { ENEMY_INDEX } from '../data/enemies';
-import { weaponOrbCount } from '../entities/weapon';
+import { weaponChainTargetCount, weaponOrbCount, type WeaponInstance } from '../entities/weapon';
 import { chance, range } from '../core/rng';
 import { norm, dist2 } from '../utils/math';
 import { armorReduction } from '../entities/stats';
@@ -11,6 +11,7 @@ import { playSfx } from '../render/audio';
 import { PLAYER_IFRAMES } from '../config';
 
 const dir = { x: 0, y: 0 };
+const chainHitIndices = new Int32Array(8);
 
 const GOO_COLORS: Record<string, string> = {
   chaser: '#4d7c42',
@@ -24,13 +25,23 @@ const GOO_COLORS: Record<string, string> = {
   boss: '#6a1018',
 };
 
-export function damageEnemy(state: RunState, e: Enemy, rawDmg: number, crit: boolean, kbX: number, kbY: number): void {
+export function damageEnemy(
+  state: RunState,
+  e: Enemy,
+  rawDmg: number,
+  crit: boolean,
+  kbX: number,
+  kbY: number,
+  sparkColor = '#ffe9a0',
+  attackerX = state.player.x,
+  attackerY = state.player.y,
+): void {
   if (!e.active || e.hp <= 0) return;
   let dmgMul = crit ? 2 : 1;
   // shieldbearer blocks most damage arriving from the front (he faces the player)
   if (e.def.frontBlock) {
-    const fx = state.player.x - e.x;
-    const fy = state.player.y - e.y;
+    const fx = attackerX - e.x;
+    const fy = attackerY - e.y;
     const fl = Math.max(1, Math.hypot(fx, fy));
     const kl = Math.max(1, Math.hypot(kbX, kbY));
     // knockback points away from the attacker; a frontal hit pushes him away from the player
@@ -46,7 +57,7 @@ export function damageEnemy(state: RunState, e: Enemy, rawDmg: number, crit: boo
   }
   spawnDamageNumber(e.x, e.y - e.radius, dmg, crit);
   const hitAngle = Math.atan2(kbY, kbX);
-  spawnSparks(e.x, e.y, hitAngle, crit ? '#ffd23e' : '#ffe9a0', crit ? 4 : 2);
+  spawnSparks(e.x, e.y, hitAngle, crit ? '#ffd23e' : sparkColor, crit ? 4 : 2);
   playSfx('hit');
   if (e.hp <= 0) {
     e.active = false; // swept at end of step
@@ -113,6 +124,60 @@ function critRoll(state: RunState): boolean {
   return chance(state.player.stats.critChance);
 }
 
+function wasHitByChain(index: number, count: number): boolean {
+  for (let i = 0; i < count; i++) {
+    if (chainHitIndices[i] === index) return true;
+  }
+  return false;
+}
+
+function castChainLightning(state: RunState, w: WeaponInstance, firstTargetIdx: number, rawDamage: number): void {
+  const def = w.def;
+  const chain = def.chain!;
+  const maxTargets = Math.min(weaponChainTargetCount(w), chainHitIndices.length, w.chainFxX.length - 1);
+  const sparkColor = def.id === 'thunderstaff' ? '#8be9fd' : '#b18cff';
+  let sourceX = state.player.x + Math.cos(w.fireAngle) * 28;
+  let sourceY = state.player.y + Math.sin(w.fireAngle) * 28 + 3;
+  let targetIdx = firstTargetIdx;
+  let hitCount = 0;
+
+  w.chainFxX[0] = sourceX;
+  w.chainFxY[0] = sourceY;
+
+  while (hitCount < maxTargets && targetIdx >= 0) {
+    const e = state.enemies.items[targetIdx];
+    if (!e.active || e.hp <= 0) break;
+
+    chainHitIndices[hitCount] = targetIdx;
+    w.chainFxX[hitCount + 1] = e.x;
+    w.chainFxY[hitCount + 1] = e.y;
+
+    norm(e.x - sourceX, e.y - sourceY, dir);
+    const damage = rawDamage * Math.pow(chain.falloff, hitCount);
+    damageEnemy(state, e, damage, critRoll(state), dir.x * 80, dir.y * 80, sparkColor, sourceX, sourceY);
+    sourceX = e.x;
+    sourceY = e.y;
+    hitCount++;
+
+    if (hitCount >= maxTargets) break;
+    let nextIdx = -1;
+    let nextD2 = chain.jumpRange * chain.jumpRange;
+    state.grid.queryCircle(sourceX, sourceY, chain.jumpRange, (i) => {
+      const next = state.enemies.items[i];
+      if (!next.active || next.hp <= 0 || wasHitByChain(i, hitCount)) return;
+      const d2 = dist2(sourceX, sourceY, next.x, next.y);
+      if (d2 < nextD2) {
+        nextD2 = d2;
+        nextIdx = i;
+      }
+    });
+    targetIdx = nextIdx;
+  }
+
+  w.chainFxPointCount = hitCount + 1;
+  w.chainFxTimer = 0.14;
+}
+
 export function updateWeapons(state: RunState, dt: number): void {
   const p = state.player;
   const dmgMult = 1 + p.stats.damagePct / 100;
@@ -124,6 +189,7 @@ export function updateWeapons(state: RunState, dt: number): void {
     const tierDmg = TIER_DAMAGE[w.tier - 1];
     const tierCd = TIER_COOLDOWN[w.tier - 1];
     w.recoil = Math.max(0, w.recoil - dt * 9);
+    w.chainFxTimer = Math.max(0, w.chainFxTimer - dt);
 
     if (def.behavior === 'orbit' && def.orbit) {
       w.orbitAngle += def.orbit.angularSpeed * speedMult * dt;
@@ -183,6 +249,9 @@ export function updateWeapons(state: RunState, dt: number): void {
           def.id,
         );
       }
+    } else if (def.behavior === 'chain' && def.chain) {
+      playSfx('magic');
+      castChainLightning(state, w, targetIdx, def.damage * dmgMult * tierDmg);
     } else if (def.behavior === 'melee' && def.melee) {
       playSfx('shoot');
       w.swipeTimer = 0.18;

@@ -24,6 +24,7 @@ export const ITEMS: readonly ItemDef[] = [
   { id: 'steak', name: 'Стейк', emoji: '🥩', rarity: 3, basePrice: 30, modifiers: { maxHp: 9, moveSpeed: -6 } },
   { id: 'berserk', name: 'Ярость', emoji: '😡', rarity: 3, basePrice: 32, modifiers: { damagePct: 9, maxHp: -10 } },
   { id: 'battery', name: 'Батарея', emoji: '🔋', rarity: 3, basePrice: 34, modifiers: { attackSpeedPct: 8, armor: -2 } },
+  { id: 'grimoire', name: 'Гримуар', emoji: '📖', rarity: 3, basePrice: 32, modifiers: { damagePct: 5, luck: 3 } },
   { id: 'crown', name: 'Корона', emoji: '👑', rarity: 4, basePrice: 55, modifiers: { damagePct: 7, attackSpeedPct: 4, luck: 4 } },
   { id: 'heart', name: 'Сердце титана', emoji: '💖', rarity: 4, basePrice: 60, weight: 0.5, modifiers: { maxHp: 16, hpRegen: 2 } },
   { id: 'katana_oil', name: 'Масло убийцы', emoji: '🧪', rarity: 4, basePrice: 58, modifiers: { critChance: 0.04, damagePct: 4 } },

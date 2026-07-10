@@ -240,6 +240,30 @@ export const SPRITES: Record<string, SpriteDef> = {
       '..occccccco...',
     ]],
   },
+  w_staff: {
+    palette: { o: OUT, h: '#8a5a3a', g: '#d8a832', c: '#a06ae0', w: '#e0ccff' },
+    frames: [[
+      '...........oo..',
+      '..........occco',
+      '.........ocwwco',
+      'ohhhhhhhggcccco',
+      '.........ocwwco',
+      '..........occco',
+      '...........oo..',
+    ]],
+  },
+  w_thunderstaff: {
+    palette: { o: OUT, h: '#49627a', g: '#d8a832', c: '#6ec8e8', w: '#e8fbff' },
+    frames: [[
+      '............o....',
+      '..........o.c.o..',
+      '.........ocwcwco.',
+      'ohhhhhhhhggccccco',
+      '.........ocwcwco.',
+      '..........o.c.o..',
+      '............o....',
+    ]],
+  },
 
   // battlefield chest
   chest: {
@@ -265,6 +289,19 @@ export const SPRITES: Record<string, SpriteDef> = {
   i_shard: {
     palette: { o: OUT, c: '#a06ae0', w: '#e0ccff', d: '#6a3cae' },
     frames: [['..oooooo..', '.owwcccco.', 'owccccccdo', '.occccddo.', '..occddo..', '...occo...', '....oo....']],
+  },
+  i_grimoire: {
+    palette: { o: OUT, p: '#6a3cae', d: '#3e246f', c: '#e8dcc8', w: '#8be9fd', g: '#d8a832' },
+    frames: [[
+      '..ooooooo..',
+      '.opppppppo.',
+      'opppcccpppo',
+      'opppcwcpppo',
+      'opppcccpppo',
+      'opppgggpppo',
+      '.odddddddo.',
+      '..ooooooo..',
+    ]],
   },
   i_skull: {
     palette: { o: OUT, w: '#d8d4c4', k: '#2a2420' },

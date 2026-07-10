@@ -1,5 +1,6 @@
 export type SfxEvent =
   | 'shoot'
+  | 'magic'
   | 'hit'
   | 'pickup'
   | 'levelup'
@@ -19,7 +20,7 @@ let musicOn = localStorage.getItem('as_music') !== '0';
 let musicTimer: number | null = null;
 
 const lastPlayed: Partial<Record<SfxEvent, number>> = {};
-const THROTTLE: Partial<Record<SfxEvent, number>> = { hit: 35, shoot: 45, pickup: 50, death: 60 };
+const THROTTLE: Partial<Record<SfxEvent, number>> = { hit: 35, shoot: 45, magic: 80, pickup: 50, death: 60 };
 
 /** Must be called from a user gesture at least once (browser autoplay policy). */
 export function ensureAudio(): void {
@@ -114,6 +115,10 @@ export function playSfx(event: SfxEvent): void {
   switch (event) {
     case 'shoot':
       tone({ freq: 720, freqEnd: 280, type: 'square', dur: 0.07, vol: 0.05 });
+      break;
+    case 'magic':
+      tone({ freq: 980, freqEnd: 440, type: 'triangle', dur: 0.12, vol: 0.075 });
+      tone({ freq: 1480, freqEnd: 720, type: 'sine', dur: 0.16, vol: 0.045, delay: 0.025 });
       break;
     case 'hit':
       noise(0.05, 0.09, 1800);
