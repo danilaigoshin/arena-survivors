@@ -37,6 +37,8 @@ npm run dev      # http://localhost:5173
 npm run build    # production build in dist/
 ```
 
+Pushes to `main` are built and deployed automatically with GitHub Actions. A deployment can also be started manually with `npm run deploy` when the GitHub CLI is authenticated.
+
 ---
 
 Built in tandem with [Claude Code](https://claude.com/claude-code).

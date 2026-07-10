@@ -8,7 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "check": "tsc --noEmit",
-    "deploy": "npm run build && touch dist/.nojekyll && cd dist && git init -b gh-pages && git add -A && git commit -m deploy && git push -f https://github.com/danilaigoshin/arena-survivors.git gh-pages && cd .. && rm -rf dist/.git"
+    "deploy": "gh workflow run deploy.yml"
   },
   "devDependencies": {
     "typescript": "^5.5.0",
