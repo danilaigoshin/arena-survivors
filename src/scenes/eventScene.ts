@@ -53,6 +53,14 @@ class EventScene implements Scene {
     if (a === 'take' && this.loot) {
       const r = this.loot;
       if (r.kind === 'weapon') {
+        if (!p.canUseWeapon(r.weapon)) {
+          const value = Math.max(1, Math.round(r.weapon.price * 0.8));
+          p.materials += value;
+          this.resultText = tt('ev.resScrap', value);
+          playSfx('buy');
+          this.resolved = true;
+          return;
+        }
         const owned = p.weapons.filter((w) => w.def.id === r.weapon.id && w.tier < MAX_TIER);
         if (owned.length > 0) {
           owned.sort((x, y) => x.tier - y.tier);
@@ -124,7 +132,7 @@ class EventScene implements Scene {
       ctx.fillText(r.kind === 'weapon' ? tn('w', r.weapon.id, r.weapon.name) : tn('i', r.item.id, r.item.name), w / 2, h / 2 + 12);
       if (!this.resolved) {
         const p = game.state.player;
-        const canTake = r.kind !== 'weapon' || p.canAddWeapon() || p.weapons.some((wi) => wi.def.id === r.weapon.id && wi.tier < MAX_TIER);
+        const canTake = r.kind !== 'weapon' || (p.canUseWeapon(r.weapon) && (p.canAddWeapon() || p.weapons.some((wi) => wi.def.id === r.weapon.id && wi.tier < MAX_TIER)));
         const scrapV = Math.max(1, Math.round((r.kind === 'weapon' ? r.weapon.price : r.item.basePrice) * 0.8));
         if (button(ctx, ui, w / 2 - 190, h / 2 + 44, 180, 46, tt('chest.take'), { primary: true, enabled: canTake })) this.action = 'take';
         if (button(ctx, ui, w / 2 + 10, h / 2 + 44, 180, 46, `+${scrapV}`, { icon: 'i_gem' })) this.action = 'scrap';

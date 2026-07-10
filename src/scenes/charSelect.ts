@@ -12,6 +12,7 @@ import { loadMeta, isUnlocked, tryUnlock } from '../core/save';
 import { runScene } from './run';
 import { menuScene } from './menu';
 import { displayFont } from '../render/font';
+import { CLASS_DEFS } from '../data/sets';
 
 const HEADER_H = 108;
 const ACTIONBAR_H = 88;
@@ -270,8 +271,14 @@ class CharSelectScene implements Scene {
     ctx.fillStyle = '#8be9fd';
     ctx.font = 'bold 13px system-ui, sans-serif';
     ctx.fillText(tn('w', wd.id, wd.name), x + 50, py + 201);
+    const cls = c.weaponClass === 'all' ? null : CLASS_DEFS[c.weaponClass];
+    ctx.textAlign = 'right';
+    ctx.fillStyle = cls?.color ?? '#8dff9a';
+    ctx.font = 'bold 11px system-ui, sans-serif';
+    ctx.fillText(tt('hero.arsenal', cls ? tn('s', cls.id, cls.name) : tt('hero.anyClass')), x + PREVIEW_W - 22, py + 201);
 
     drawIcon(ctx, c.ability.icon, x + 34, py + 224, 18);
+    ctx.textAlign = 'left';
     ctx.fillStyle = '#ffd23e';
     ctx.fillText(tn('ab', c.ability.id, c.ability.name), x + 50, py + 225);
     const abW = ctx.measureText(tn('ab', c.ability.id, c.ability.name)).width;

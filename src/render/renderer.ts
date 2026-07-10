@@ -68,6 +68,82 @@ function drawChainLightning(ctx: CanvasRenderingContext2D, w: WeaponInstance, ti
   ctx.restore();
 }
 
+function areaColor(style: string): string {
+  if (style === 'armageddon' || style === 'solar_disc') return '#ff7030';
+  if (style === 'runestone') return '#b18cff';
+  if (style === 'void_seal') return '#7546c8';
+  if (style === 'titan_hammer') return '#ffd23e';
+  return '#b18cff';
+}
+
+function drawWeaponAreas(ctx: CanvasRenderingContext2D, state: RunState, time: number): void {
+  for (let i = 0; i < state.areaEffects.count; i++) {
+    const area = state.areaEffects.items[i];
+    const color = areaColor(area.style);
+    ctx.save();
+    if (area.kind === 'shockwave') {
+      const alpha = Math.max(0, 1 - area.radius / Math.max(1, area.maxRadius));
+      ctx.globalAlpha = 0.35 + alpha * 0.55;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 5 * alpha + 2;
+      ctx.beginPath();
+      ctx.arc(area.x, area.y, area.radius, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+      continue;
+    }
+    if (area.delay > 0) {
+      const pulse = 0.55 + Math.sin(time * 18 + i) * 0.2;
+      ctx.globalAlpha = pulse;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.setLineDash([8, 6]);
+      ctx.beginPath();
+      ctx.arc(area.x, area.y, area.impactRadius, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = `${color}22`;
+      ctx.fill();
+    } else {
+      const life = Math.min(1, area.ttl / 0.45);
+      const pulse = 0.8 + Math.sin(time * 7 + area.uid) * 0.08;
+      ctx.globalAlpha = life * 0.18;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(area.x, area.y, area.radius * pulse, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = life * 0.7;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(area.x, area.y, area.radius * pulse, 0, Math.PI * 2);
+      ctx.stroke();
+      for (let r = 0; r < 4; r++) {
+        const a = time * (area.style === 'void_seal' ? -1.8 : 1.2) + r * Math.PI / 2;
+        ctx.fillStyle = r % 2 ? '#ffffff' : color;
+        ctx.fillRect(area.x + Math.cos(a) * area.radius * 0.55 - 2, area.y + Math.sin(a) * area.radius * 0.55 - 2, 4, 4);
+      }
+    }
+    ctx.restore();
+  }
+}
+
+function drawSummons(ctx: CanvasRenderingContext2D, state: RunState, time: number): void {
+  for (const w of state.player.weapons) {
+    if (!w.def.summon) continue;
+    const evolved = w.def.id === 'soul_legion';
+    for (let i = 0; i < w.summonCount; i++) {
+      const bob = Math.sin(time * 8 + i * 1.7) * 2;
+      ctx.save();
+      ctx.globalAlpha = 0.85;
+      ctx.shadowColor = evolved ? '#d7b8ff' : '#b18cff';
+      ctx.shadowBlur = w.summonFlash[i] > 0 ? 20 : 10;
+      drawSprite(ctx, 'i_soul', w.summonX[i], w.summonY[i] + bob, evolved ? 24 : 20, { flip: Math.sin(time + i) < 0 });
+      ctx.restore();
+    }
+  }
+}
+
 function drawFloor(ctx: CanvasRenderingContext2D, state: RunState): void {
   const theme = state.theme;
   if (state.floorCanvas) {
@@ -196,6 +272,8 @@ export function renderWorld(ctx: CanvasRenderingContext2D, state: RunState, cam:
     ctx.restore();
   }
 
+  drawWeaponAreas(ctx, state, time);
+
   // battlefield chests: bobbing with a golden pulse
   for (const c of state.chests) {
     const bobY = Math.sin(time * 3 + c.x * 0.01) * 2;
@@ -254,6 +332,22 @@ export function renderWorld(ctx: CanvasRenderingContext2D, state: RunState, cam:
       tint: e.elite && !enraged ? '#ffd23e' : undefined,
       tintAlpha: 0.35,
     });
+    if (e.burnT > 0) {
+      ctx.fillStyle = '#ff9a45';
+      ctx.globalAlpha = 0.75;
+      ctx.fillRect(e.x - 5, e.y - e.radius - 7 - Math.sin(time * 12 + e.uid) * 3, 3, 6);
+      ctx.fillRect(e.x + 3, e.y - e.radius - 4 + Math.cos(time * 10 + e.uid) * 2, 2, 4);
+      ctx.globalAlpha = 1;
+    }
+    if (e.freezeT > 0 || e.slowT > 0) {
+      ctx.strokeStyle = e.freezeT > 0 ? '#e8fbff' : '#8be9fd';
+      ctx.globalAlpha = e.freezeT > 0 ? 0.9 : 0.45;
+      ctx.lineWidth = e.freezeT > 0 ? 3 : 2;
+      ctx.beginPath();
+      ctx.ellipse(e.x, e.y + e.radius * 0.75, e.radius * 1.05, e.radius * 0.4, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
     if (enraged) ctx.restore();
     if (!e.isBoss && e.hp < e.maxHp) {
       const w = e.radius * 1.8;
@@ -281,12 +375,39 @@ export function renderWorld(ctx: CanvasRenderingContext2D, state: RunState, cam:
 
   drawSecondHand(ctx, state, time);
   drawHeldWeapon(ctx, state, time);
+  drawSummons(ctx, state, time);
 
   // weapon visuals: chain lightning, melee swipes + orbit orbs
   for (const w of p.weapons) {
     drawChainLightning(ctx, w, time);
     if (w.def.behavior === 'melee' && w.swipeTimer > 0 && w.def.melee) {
       const t = 1 - w.swipeTimer / 0.18;
+      if (w.def.melee.shape === 'thrust') {
+        ctx.save();
+        ctx.globalAlpha = 0.8 * (1 - t);
+        ctx.strokeStyle = w.def.id === 'gungnir' ? '#ffe9a0' : '#cfe3ff';
+        ctx.lineWidth = w.def.melee.width ?? 8;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(p.x + Math.cos(w.swipeAngle) * 18, p.y + Math.sin(w.swipeAngle) * 18);
+        ctx.lineTo(p.x + Math.cos(w.swipeAngle) * w.def.range, p.y + Math.sin(w.swipeAngle) * w.def.range);
+        ctx.stroke();
+        ctx.restore();
+        continue;
+      }
+      if (w.def.melee.shape === 'slam') {
+        ctx.save();
+        ctx.globalAlpha = 0.55 * (1 - t);
+        ctx.fillStyle = w.def.id === 'titan_hammer' ? '#ffd23e44' : '#cfe3ff44';
+        ctx.strokeStyle = w.def.id === 'titan_hammer' ? '#ffd23e' : '#cfe3ff';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, w.def.range * (0.65 + t * 0.35), 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+        continue;
+      }
       const half = w.def.melee.arcRad / 2;
       const sweep = -half + w.def.melee.arcRad * t;
       // slash fill
@@ -336,6 +457,10 @@ export function renderWorld(ctx: CanvasRenderingContext2D, state: RunState, cam:
   for (let i = 0; i < state.projectiles.count; i++) {
     const pr = state.projectiles.items[i];
     if (pr.friendly) {
+      if (pr.style === 'chakram' || pr.style === 'solar_disc') {
+        drawSprite(ctx, weaponIcon(pr.style), pr.x, pr.y, pr.style === 'solar_disc' ? 24 : 19, { rotate: time * 12 + i });
+        continue;
+      }
       const st = BULLET_STYLES[pr.style] ?? BULLET_STYLES.default;
       const ang = Math.atan2(pr.vy, pr.vx);
       // trail
@@ -439,6 +564,14 @@ const BULLET_STYLES: Record<string, BulletStyle> = {
   stormgun: { len: 8, w: 3, body: '#d8fbff', glow: '#6ec8e8', blur: 6, trail: 0.045, trailAlpha: 0.4 },
   staff: { len: 10, w: 4, body: '#efe5ff', glow: '#b18cff', blur: 10, trail: 0, trailAlpha: 0 },
   thunderstaff: { len: 12, w: 4.5, body: '#ffffff', glow: '#6ec8e8', blur: 14, trail: 0, trailAlpha: 0 },
+  shotgun: { len: 7, w: 4, body: '#ffe9a0', glow: '#ffd23e', blur: 4, trail: 0.025, trailAlpha: 0.25 },
+  dragonbreath: { len: 9, w: 5, body: '#ffe06a', glow: '#ff7030', blur: 8, trail: 0.045, trailAlpha: 0.5 },
+  grenade_launcher: { len: 9, w: 8, body: '#718878', glow: '#ff9a45', blur: 5, trail: 0.02, trailAlpha: 0.25 },
+  cluster_mortar: { len: 10, w: 9, body: '#ffd06a', glow: '#ff7030', blur: 8, trail: 0.025, trailAlpha: 0.35 },
+  ricochet_rifle: { len: 12, w: 3, body: '#d8f0ff', glow: '#4f9cf0', blur: 7, trail: 0.055, trailAlpha: 0.55 },
+  prism_rifle: { len: 14, w: 4, body: '#ffffff', glow: '#b18cff', blur: 10, trail: 0.07, trailAlpha: 0.65 },
+  shadow_blades: { len: 15, w: 4, body: '#eadfff', glow: '#7546c8', blur: 8, trail: 0.05, trailAlpha: 0.55, tip: '#ffffff' },
+  fire_wand: { len: 10, w: 7, body: '#ffe06a', glow: '#ff7030', blur: 10, trail: 0.06, trailAlpha: 0.6 },
 };
 
 const HELD_SPRITES: Record<string, string> = {
@@ -451,6 +584,28 @@ const HELD_SPRITES: Record<string, string> = {
   stormblade: 'w_stormblade',
   staff: 'w_staff',
   thunderstaff: 'w_thunderstaff',
+  shotgun: 'w_shotgun',
+  dragonbreath: 'w_dragonbreath',
+  grenade_launcher: 'w_grenade_launcher',
+  cluster_mortar: 'w_cluster_mortar',
+  ricochet_rifle: 'w_ricochet_rifle',
+  prism_rifle: 'w_prism_rifle',
+  daggers: 'w_daggers',
+  shadow_blades: 'w_shadow_blades',
+  warhammer: 'w_warhammer',
+  titan_hammer: 'w_titan_hammer',
+  spear: 'w_spear',
+  gungnir: 'w_gungnir',
+  chakram: 'w_chakram',
+  solar_disc: 'w_solar_disc',
+  fire_wand: 'w_fire_wand',
+  armageddon: 'w_armageddon',
+  ice_tome: 'w_ice_tome',
+  absolute_zero: 'w_absolute_zero',
+  runestone: 'w_runestone',
+  void_seal: 'w_void_seal',
+  soul_lantern: 'w_soul_lantern',
+  soul_legion: 'w_soul_legion',
   deathsting: 'w_deathsting',
   annihilator: 'w_annihilator',
   hurricane: 'w_hurricane',

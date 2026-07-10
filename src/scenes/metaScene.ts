@@ -9,6 +9,7 @@ import { playSfx } from '../render/audio';
 import { t as tt, tn } from '../core/i18n';
 import { menuScene } from './menu';
 import { displayFont } from '../render/font';
+import { CLASS_DEFS, WEAPON_CLASS, type WeaponClassId } from '../data/sets';
 
 const CARD_W = 240;
 const CARD_H = 190;
@@ -17,6 +18,7 @@ const GAP = 20;
 class MetaScene implements Scene {
   private pending: (() => void) | null = null;
   private back = false;
+  private unlockClass: WeaponClassId = 'gunner';
 
   update(game: Game, _dt: number): void {
     if (this.back) {
@@ -32,7 +34,7 @@ class MetaScene implements Scene {
   }
 
   render(game: Game, ctx: CanvasRenderingContext2D): void {
-    responsiveScene(ctx, game.ui, game.viewport, 1100, 620, (w, h, ui) => this.renderContent(game, ctx, w, h, ui));
+    responsiveScene(ctx, game.ui, game.viewport, 1100, 680, (w, h, ui) => this.renderContent(game, ctx, w, h, ui));
   }
 
   private renderContent(game: Game, ctx: CanvasRenderingContext2D, w: number, h: number, ui: UiInput): void {
@@ -106,29 +108,46 @@ class MetaScene implements Scene {
     });
 
     // ── unlockable weapons row ──
-    const unlockables = WEAPONS.filter((wd) => wd.unlockCost);
+    const unlockables = WEAPONS.filter((wd) => wd.unlockCost && WEAPON_CLASS[wd.id] === this.unlockClass);
     const uy = py + CARD_H + 44;
     const uTotal = unlockables.length * CARD_W + (unlockables.length - 1) * GAP;
     ctx.fillStyle = '#f0a03c';
     ctx.font = 'bold 16px system-ui, sans-serif';
     ctx.textAlign = 'left';
     ctx.fillText(tt('meta.unlocks'), w / 2 - uTotal / 2, uy - 12);
+    const classIds: WeaponClassId[] = ['gunner', 'blade', 'arcane'];
+    const tabW = 156;
+    const tabGap = 10;
+    const tabsW = classIds.length * tabW + (classIds.length - 1) * tabGap;
+    classIds.forEach((id, i) => {
+      const cls = CLASS_DEFS[id];
+      if (button(ctx, ui, w / 2 - tabsW / 2 + i * (tabW + tabGap), uy + 2, tabW, 32, tn('s', cls.id, cls.name), { primary: id === this.unlockClass, fontSize: 12 })) {
+        this.unlockClass = id;
+      }
+    });
+    const cardsY = uy + 44;
     unlockables.forEach((wd, i) => {
       const x = w / 2 - uTotal / 2 + i * (CARD_W + GAP);
       const owned = isUnlocked(wd.id);
-      panel(ctx, x, uy, CARD_W, CARD_H - 30, { radius: 14, border: owned ? '#8dff9a' : '#ffffff22' });
-      drawIcon(ctx, weaponIcon(wd.id), x + CARD_W / 2, uy + 40, 34);
+      panel(ctx, x, cardsY, CARD_W, CARD_H - 30, { radius: 14, border: owned ? '#8dff9a' : '#ffffff22' });
+      drawIcon(ctx, weaponIcon(wd.id), x + CARD_W / 2, cardsY + 40, 34);
       ctx.fillStyle = '#ffffff';
       ctx.font = 'bold 17px system-ui, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText(tn('w', wd.id, wd.name), x + CARD_W / 2, uy + 76);
+      ctx.fillText(tn('w', wd.id, wd.name), x + CARD_W / 2, cardsY + 76);
       ctx.font = '13px system-ui, sans-serif';
       ctx.fillStyle = '#ccccdd';
-      const desc = wd.behavior === 'orbit' ? tt('shop.dmgTick', wd.damage) : tt('shop.dmgCd', wd.damage, wd.cooldown);
-      ctx.fillText(desc, x + CARD_W / 2, uy + 98);
+      const desc = wd.behavior === 'orbit'
+        ? tt('shop.dmgTick', wd.damage)
+        : wd.behavior === 'zone' && wd.zone
+          ? tt('shop.dmgTick', Math.round(wd.damage * wd.zone.tickDamageScale))
+          : wd.behavior === 'summon' && wd.summon
+            ? tt('shop.dmgCd', wd.damage, wd.summon.hitCooldown)
+            : tt('shop.dmgCd', wd.damage, wd.cooldown);
+      ctx.fillText(desc, x + CARD_W / 2, cardsY + 98);
       const label = owned ? tt('meta.opened') : `${wd.unlockCost}`;
       if (
-        button(ctx, ui, x + 24, uy + CARD_H - 30 - 48, CARD_W - 48, 34, label, {
+        button(ctx, ui, x + 24, cardsY + CARD_H - 30 - 48, CARD_W - 48, 34, label, {
           enabled: !owned && meta.shards >= wd.unlockCost!,
           icon: owned ? undefined : 'i_shard',
         })
@@ -142,7 +161,7 @@ class MetaScene implements Scene {
     ctx.fillStyle = '#667';
     ctx.font = '13px system-ui, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(tt('meta.heroes'), w / 2, uy + CARD_H - 30 + 34);
+    ctx.fillText(tt('meta.heroes'), w / 2, cardsY + CARD_H - 30 + 26);
 
     if (button(ctx, ui, 20, 20, 110, 42, tt('hero.back'))) this.back = true;
   }

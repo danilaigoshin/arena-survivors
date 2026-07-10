@@ -19,6 +19,12 @@ export class WeaponInstance {
   chainFxPointCount = 0;
   readonly chainFxX = new Float32Array(7);
   readonly chainFxY = new Float32Array(7);
+  /** Persistent summoned spirits; fixed arrays keep combat allocation-free. */
+  summonCount = 0;
+  readonly summonX = new Float32Array(4);
+  readonly summonY = new Float32Array(4);
+  readonly summonHitCd = new Float32Array(4);
+  readonly summonFlash = new Float32Array(4);
   slotIndex = 0;
 
   constructor(def: WeaponDef, slotIndex: number) {

@@ -4,11 +4,12 @@ import { toggleMute } from './render/audio';
 import { loadFonts } from './render/font';
 import { runScene } from './scenes/run';
 import { validateSprites } from './render/sprites';
+import { validateGameContent } from './data/validation';
 
 loadFonts();
 if (import.meta.env.DEV) {
-  const spriteProblems = validateSprites();
-  if (spriteProblems.length > 0) throw new Error(`Invalid pixel sprites:\n${spriteProblems.join('\n')}`);
+  const problems = [...validateGameContent(), ...validateSprites()];
+  if (problems.length > 0) throw new Error(`Invalid game content:\n${problems.join('\n')}`);
 }
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const game = new Game(canvas);

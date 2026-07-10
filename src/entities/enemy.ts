@@ -17,6 +17,13 @@ export class Enemy {
   knockX = 0;
   knockY = 0;
   shootCd = 0;
+  burnT = 0;
+  burnDps = 0;
+  burnTick = 0;
+  slowT = 0;
+  slowPct = 0;
+  freezeT = 0;
+  lastShockwaveUid = 0;
   /** scale-in on spawn; no contact damage while > 0 */
   spawnT = 0;
   elite = false;
@@ -62,6 +69,13 @@ export class Enemy {
     this.knockX = 0;
     this.knockY = 0;
     this.shootCd = def.shoot ? def.shoot.cooldown * (0.5 + Math.random() * 0.5) : 0;
+    this.burnT = 0;
+    this.burnDps = 0;
+    this.burnTick = 0;
+    this.slowT = 0;
+    this.slowPct = 0;
+    this.freezeT = 0;
+    this.lastShockwaveUid = 0;
     this.spawnT = 0.3;
     this.isBoss = def.ai === 'boss';
     this.phaseTimer = 0;

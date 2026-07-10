@@ -1,6 +1,12 @@
 export type SfxEvent =
   | 'shoot'
   | 'magic'
+  | 'explosion'
+  | 'heavy'
+  | 'return'
+  | 'fire'
+  | 'ice'
+  | 'summon'
   | 'hit'
   | 'pickup'
   | 'levelup'
@@ -20,7 +26,7 @@ let musicOn = localStorage.getItem('as_music') !== '0';
 let musicTimer: number | null = null;
 
 const lastPlayed: Partial<Record<SfxEvent, number>> = {};
-const THROTTLE: Partial<Record<SfxEvent, number>> = { hit: 35, shoot: 45, magic: 80, pickup: 50, death: 60 };
+const THROTTLE: Partial<Record<SfxEvent, number>> = { hit: 35, shoot: 45, magic: 80, explosion: 90, heavy: 90, return: 80, fire: 70, ice: 90, summon: 120, pickup: 50, death: 60 };
 
 /** Must be called from a user gesture at least once (browser autoplay policy). */
 export function ensureAudio(): void {
@@ -119,6 +125,29 @@ export function playSfx(event: SfxEvent): void {
     case 'magic':
       tone({ freq: 980, freqEnd: 440, type: 'triangle', dur: 0.12, vol: 0.075 });
       tone({ freq: 1480, freqEnd: 720, type: 'sine', dur: 0.16, vol: 0.045, delay: 0.025 });
+      break;
+    case 'explosion':
+      noise(0.16, 0.14, 420);
+      tone({ freq: 150, freqEnd: 48, type: 'sawtooth', dur: 0.2, vol: 0.09 });
+      break;
+    case 'heavy':
+      noise(0.1, 0.11, 260);
+      tone({ freq: 190, freqEnd: 70, type: 'square', dur: 0.14, vol: 0.08 });
+      break;
+    case 'return':
+      tone({ freq: 520, freqEnd: 980, type: 'sawtooth', dur: 0.11, vol: 0.055 });
+      break;
+    case 'fire':
+      noise(0.1, 0.055, 1200);
+      tone({ freq: 620, freqEnd: 210, type: 'triangle', dur: 0.14, vol: 0.06 });
+      break;
+    case 'ice':
+      tone({ freq: 1320, freqEnd: 760, type: 'sine', dur: 0.18, vol: 0.07 });
+      tone({ freq: 1760, freqEnd: 1100, type: 'triangle', dur: 0.12, vol: 0.035, delay: 0.02 });
+      break;
+    case 'summon':
+      tone({ freq: 260, freqEnd: 720, type: 'sine', dur: 0.22, vol: 0.065 });
+      tone({ freq: 390, freqEnd: 1040, type: 'triangle', dur: 0.18, vol: 0.04, delay: 0.04 });
       break;
     case 'hit':
       noise(0.05, 0.09, 1800);

@@ -3,6 +3,7 @@ import { norm, clamp } from '../utils/math';
 import { ARENA_W, ARENA_H } from '../config';
 import { pushOutOfObstacles } from '../data/maps';
 import { ENEMY_INDEX } from '../data/enemies';
+import { enemyMoveMultiplier } from './combat';
 
 const dir = { x: 0, y: 0 };
 
@@ -35,7 +36,7 @@ function bossFire(state: RunState, e: import('../entities/enemy').Enemy, angle: 
  * Bosses share one state machine: chase → pick an attack from def.attacks.
  * Stages by remaining HP make everything denser and faster.
  */
-function bossUpdate(state: RunState, e: import('../entities/enemy').Enemy, dt: number): void {
+function bossUpdate(state: RunState, e: import('../entities/enemy').Enemy, dt: number, moveMult: number): void {
   const p = state.player;
   const def = e.def;
   const frac = e.hp / e.maxHp;
@@ -76,8 +77,8 @@ function bossUpdate(state: RunState, e: import('../entities/enemy').Enemy, dt: n
     return; // telegraph: stand still, renderer blinks
   }
   if (e.phase === 2) {
-    e.x += e.dashVx * 520 * speedMult * dt;
-    e.y += e.dashVy * 520 * speedMult * dt;
+    e.x += e.dashVx * 520 * speedMult * moveMult * dt;
+    e.y += e.dashVy * 520 * speedMult * moveMult * dt;
     // the Brute sets the ground on fire while charging (one patch every ~26u)
     if (def.fireTrail && state.firePatches.length < 160) {
       const last = state.firePatches[state.firePatches.length - 1];
@@ -104,8 +105,8 @@ function bossUpdate(state: RunState, e: import('../entities/enemy').Enemy, dt: n
 
   // chase
   const dist = norm(p.x - e.x, p.y - e.y, dir);
-  e.x += dir.x * e.speed * speedMult * dt;
-  e.y += dir.y * e.speed * speedMult * dt;
+  e.x += dir.x * e.speed * speedMult * moveMult * dt;
+  e.y += dir.y * e.speed * speedMult * moveMult * dt;
 
   // next attack
   e.shootCd -= dt;
@@ -153,17 +154,19 @@ export function updateEnemies(state: RunState, dt: number): void {
   const p = state.player;
   for (let i = 0; i < state.enemies.count; i++) {
     const e = state.enemies.items[i];
+    if (!e.active || e.hp <= 0) continue;
     const def = e.def;
+    const moveMult = enemyMoveMultiplier(e);
 
     if (def.ai === 'boss') {
-      bossUpdate(state, e, dt);
+      bossUpdate(state, e, dt, moveMult);
     } else if (def.ai === 'chargeDash') {
       // sprinter: approach, telegraph briefly, then lunge at the player
       e.phaseTimer -= dt;
       if (e.phase === 0) {
         const dist = norm(p.x - e.x, p.y - e.y, dir);
-        e.x += dir.x * e.speed * dt;
-        e.y += dir.y * e.speed * dt;
+        e.x += dir.x * e.speed * moveMult * dt;
+        e.y += dir.y * e.speed * moveMult * dt;
         if (e.phaseTimer <= 0 && dist < 420 && dist > 60) {
           e.phase = 1; // telegraph (renderer blinks white)
           e.phaseTimer = 0.35;
@@ -177,8 +180,8 @@ export function updateEnemies(state: RunState, dt: number): void {
           e.phaseTimer = 0.35;
         }
       } else {
-        e.x += e.dashVx * 560 * dt;
-        e.y += e.dashVy * 560 * dt;
+        e.x += e.dashVx * 560 * moveMult * dt;
+        e.y += e.dashVy * 560 * moveMult * dt;
         if (e.phaseTimer <= 0) {
           e.phase = 0;
           e.phaseTimer = 2.2;
@@ -196,8 +199,8 @@ export function updateEnemies(state: RunState, dt: number): void {
           e.dashVy = dir.y;
         }
       } else {
-        e.x += e.dashVx * 340 * dt;
-        e.y += e.dashVy * 340 * dt;
+        e.x += e.dashVx * 340 * moveMult * dt;
+        e.y += e.dashVy * 340 * moveMult * dt;
         if (e.phaseTimer <= 0) {
           e.phase = 0;
           e.phaseTimer = 0.55;
@@ -207,11 +210,11 @@ export function updateEnemies(state: RunState, dt: number): void {
       // keeps a respectful distance and keeps calling packs of runners
       const dist = norm(p.x - e.x, p.y - e.y, dir);
       if (dist > 380) {
-        e.x += dir.x * e.speed * dt;
-        e.y += dir.y * e.speed * dt;
+        e.x += dir.x * e.speed * moveMult * dt;
+        e.y += dir.y * e.speed * moveMult * dt;
       } else if (dist < 280) {
-        e.x -= dir.x * e.speed * 0.8 * dt;
-        e.y -= dir.y * e.speed * 0.8 * dt;
+        e.x -= dir.x * e.speed * 0.8 * moveMult * dt;
+        e.y -= dir.y * e.speed * 0.8 * moveMult * dt;
       }
       e.summonCd -= dt;
       if (e.summonCd <= 0) {
@@ -229,11 +232,11 @@ export function updateEnemies(state: RunState, dt: number): void {
       const dist = norm(p.x - e.x, p.y - e.y, dir);
       const desired = def.shoot.range * 0.8;
       if (dist > desired + 30) {
-        e.x += dir.x * e.speed * dt;
-        e.y += dir.y * e.speed * dt;
+        e.x += dir.x * e.speed * moveMult * dt;
+        e.y += dir.y * e.speed * moveMult * dt;
       } else if (dist < desired - 60) {
-        e.x -= dir.x * e.speed * 0.7 * dt;
-        e.y -= dir.y * e.speed * 0.7 * dt;
+        e.x -= dir.x * e.speed * 0.7 * moveMult * dt;
+        e.y -= dir.y * e.speed * 0.7 * moveMult * dt;
       }
       e.shootCd -= dt;
       if (e.shootCd <= 0 && dist <= def.shoot.range) {
@@ -242,8 +245,8 @@ export function updateEnemies(state: RunState, dt: number): void {
       }
     } else {
       norm(p.x - e.x, p.y - e.y, dir);
-      e.x += dir.x * e.speed * dt;
-      e.y += dir.y * e.speed * dt;
+      e.x += dir.x * e.speed * moveMult * dt;
+      e.y += dir.y * e.speed * moveMult * dt;
     }
 
     // knockback impulse decay

@@ -6,6 +6,8 @@ import { WeaponInstance } from './weapon';
 import { PERKS } from '../data/perks';
 import { perkLevel } from '../core/save';
 import { activeSetBonuses } from '../data/sets';
+import { WEAPON_CLASS } from '../data/sets';
+import type { WeaponDef } from '../data/weapons';
 import { MAX_WEAPON_SLOTS } from '../config';
 import { ARENA_W, ARENA_H } from '../config';
 
@@ -73,6 +75,10 @@ export class Player {
 
   canAddWeapon(): boolean {
     return this.weapons.length < MAX_WEAPON_SLOTS;
+  }
+
+  canUseWeapon(weapon: WeaponDef): boolean {
+    return this.character.weaponClass === 'all' || WEAPON_CLASS[weapon.id] === this.character.weaponClass;
   }
 
   xpToNext(): number {

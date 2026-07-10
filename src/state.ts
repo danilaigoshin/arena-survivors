@@ -4,7 +4,8 @@ import { Player } from './entities/player';
 import { Enemy } from './entities/enemy';
 import { Projectile } from './entities/projectile';
 import { Pickup } from './entities/pickup';
-import { POOL_ENEMIES, POOL_PROJECTILES, POOL_PICKUPS, PICKUP_MERGE_CAP } from './config';
+import { AreaEffect } from './entities/areaEffect';
+import { POOL_AREA_EFFECTS, POOL_ENEMIES, POOL_PROJECTILES, POOL_PICKUPS, PICKUP_MERGE_CAP } from './config';
 import { dist2 } from './utils/math';
 import { THEMES, type MapTheme, type Obstacle } from './data/maps';
 import { DIFFICULTIES, type DifficultyDef } from './data/difficulty';
@@ -23,6 +24,7 @@ export class RunState {
   player = new Player();
   enemies = new Pool(POOL_ENEMIES, () => new Enemy());
   projectiles = new Pool(POOL_PROJECTILES, () => new Projectile());
+  areaEffects = new Pool(POOL_AREA_EFFECTS, () => new AreaEffect());
   pickups = new Pool(POOL_PICKUPS, () => new Pickup());
   grid = new SpatialGrid(POOL_ENEMIES);
 
@@ -39,14 +41,15 @@ export class RunState {
   /** end-of-wave vacuum: all pickups fly to the player */
   vacuum = false;
 
-  spawnProjectile(x: number, y: number, vx: number, vy: number, damage: number, pierce: number, ttl: number, friendly: boolean, crit = false, style = ''): void {
+  spawnProjectile(x: number, y: number, vx: number, vy: number, damage: number, pierce: number, ttl: number, friendly: boolean, crit = false, style = '', variant = 0): Projectile {
     let p = this.projectiles.alloc();
     if (!p) {
       // recycle oldest slot
       p = this.projectiles.items[0];
     }
     p.active = true;
-    p.init(x, y, vx, vy, damage, pierce, ttl, friendly, crit, style);
+    p.init(x, y, vx, vy, damage, pierce, ttl, friendly, crit, style, variant);
+    return p;
   }
 
   dropMaterials(x: number, y: number, amount: number): void {

@@ -29,8 +29,8 @@ function priceScale(wave: number): number {
 }
 
 /** Weapons available in the shop: not evolved, not meta-locked. */
-function weaponPool(): WeaponDef[] {
-  return WEAPONS.filter((w) => !w.evolved && (!w.unlockCost || isUnlocked(w.id)));
+function weaponPool(player: Player): WeaponDef[] {
+  return WEAPONS.filter((w) => !w.evolved && player.canUseWeapon(w) && (!w.unlockCost || isUnlocked(w.id)));
 }
 
 /** A duplicate purchase merges into a higher tier — price scales with the target tier. */
@@ -51,12 +51,20 @@ export function mergeTarget(offer: ShopOffer, player: Player): number {
 
 function rollOffer(wave: number, player: Player): ShopOffer {
   // only weapons the player can actually take: a free slot, or a mergeable duplicate
-  const takeable = weaponPool().filter(
+  const takeable = weaponPool(player).filter(
     (w) => player.canAddWeapon() || player.weapons.some((o) => o.def.id === w.id && o.tier < MAX_TIER),
   );
   const wantWeapon = takeable.length > 0 && chance(0.45);
   if (wantWeapon) {
-    const weapon = pick(takeable);
+    let candidates = takeable;
+    if (player.character.weaponClass === 'all') {
+      const mergeable = takeable.filter((w) => player.weapons.some((o) => o.def.id === w.id && o.tier < MAX_TIER));
+      const fresh = takeable.filter((w) => !player.weapons.some((o) => o.def.id === w.id));
+      if (mergeable.length > 0 && fresh.length > 0) candidates = chance(0.6) ? mergeable : fresh;
+      else if (mergeable.length > 0) candidates = mergeable;
+      else if (fresh.length > 0) candidates = fresh;
+    }
+    const weapon = pick(candidates);
     return { kind: 'weapon', weapon, price: Math.round(weapon.price * priceScale(wave)), sold: false };
   }
   const rarity = rarityRoll(wave, player.stats.luck);

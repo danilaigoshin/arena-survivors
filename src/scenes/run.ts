@@ -8,7 +8,7 @@ import { button, dimBackground, fitToViewport, panel, renderFitted } from '../re
 import { norm, clamp } from '../utils/math';
 import { updateSpawner } from '../systems/spawner';
 import { updateEnemies } from '../systems/enemyAI';
-import { updateWeapons, damageEnemy, damagePlayer } from '../systems/combat';
+import { updateAreaEffects, updateEnemyStatuses, updateWeapons, damageEnemy, damagePlayer } from '../systems/combat';
 import { addShake } from '../render/fx';
 import { updateProjectiles, separateEnemies, enemyContactDamage } from '../systems/collision';
 import { updatePickups, updateRegen, rollUpgradeChoices } from '../systems/levelup';
@@ -86,6 +86,7 @@ class RunScene implements Scene {
     // every wave starts at full health (Brotato-style)
     s.player.hp = s.player.stats.maxHp;
     s.projectiles.clear();
+    s.areaEffects.clear();
     // fresh map every wave
     const map = generateMap(s.wave);
     s.theme = map.theme;
@@ -234,6 +235,8 @@ class RunScene implements Scene {
 
     updateWeapons(s, dt);
     updateProjectiles(s, dt);
+    updateAreaEffects(s, dt);
+    updateEnemyStatuses(s, dt);
     separateEnemies(s);
     enemyContactDamage(s);
     s.enemies.sweep();
@@ -390,6 +393,11 @@ class RunScene implements Scene {
       return;
     }
     if (r.kind === 'weapon') {
+      if (!p.canUseWeapon(r.weapon)) {
+        p.materials += Math.max(1, Math.round(r.weapon.price * 0.8));
+        playSfx('buy');
+        return;
+      }
       const mergeable = p.weapons.find((w) => w.def.id === r.weapon.id && w.tier < MAX_TIER);
       if (mergeable) {
         const owned = p.weapons.filter((w) => w.def.id === r.weapon.id && w.tier < MAX_TIER);
@@ -528,7 +536,7 @@ class RunScene implements Scene {
         }
 
         const scrapValue = Math.max(1, Math.round((r.kind === 'weapon' ? r.weapon.price : r.item.basePrice) * 0.8));
-        const canTake = r.kind !== 'weapon' || p.canAddWeapon() || p.weapons.some((wi) => wi.def.id === r.weapon.id && wi.tier < MAX_TIER);
+        const canTake = r.kind !== 'weapon' || (p.canUseWeapon(r.weapon) && (p.canAddWeapon() || p.weapons.some((wi) => wi.def.id === r.weapon.id && wi.tier < MAX_TIER)));
         if (button(ctx, ui, 34, 226, pw - 48, 48, t('chest.take'), { primary: true, enabled: canTake })) this.chestAction = 'take';
         if (button(ctx, ui, 34, 284, pw - 48, 40, t('chest.scrap', scrapValue), { icon: 'i_gem' })) this.chestAction = 'scrap';
       });

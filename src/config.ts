@@ -11,6 +11,7 @@ export const POOL_ENEMIES = 400;
 export const POOL_PICKUPS = 400;
 export const POOL_PARTICLES = 500;
 export const POOL_DMG_NUMBERS = 128;
+export const POOL_AREA_EFFECTS = 96;
 
 export const PICKUP_MERGE_CAP = 300;
 export const PLAYER_IFRAMES = 0.3;

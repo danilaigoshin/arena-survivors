@@ -70,6 +70,7 @@ class ShopScene implements Scene {
     const price = this.price(offer, p);
     if (offer.sold || p.materials < price) return;
     if (offer.kind === 'weapon') {
+      if (!p.canUseWeapon(offer.weapon)) return;
       const target = mergeTarget(offer, p);
       if (target > 1) {
         // merge: raise the lowest-tier duplicate instead of taking a slot
@@ -325,7 +326,13 @@ class ShopScene implements Scene {
       if (offer.kind === 'weapon') {
         ctx.fillStyle = '#ccccdd';
         const d = offer.weapon;
-        const desc = d.behavior === 'orbit' ? tt('shop.dmgTick', d.damage) : tt('shop.dmgCd', d.damage, d.cooldown);
+        const desc = d.behavior === 'orbit'
+          ? tt('shop.dmgTick', d.damage)
+          : d.behavior === 'zone' && d.zone
+            ? tt('shop.dmgTick', Math.round(d.damage * d.zone.tickDamageScale))
+            : d.behavior === 'summon' && d.summon
+              ? tt('shop.dmgCd', d.damage, d.summon.hitCooldown)
+              : tt('shop.dmgCd', d.damage, d.cooldown);
         ctx.fillText(desc, cx, y + 176);
         if (target <= 1 && !p.canAddWeapon()) {
           ctx.fillStyle = '#ff8888';
@@ -510,14 +517,26 @@ class ShopScene implements Scene {
       lines.push([tt('tt.range'), `${d.range}`]);
       lines.push([tt('tt.pierce'), d.projectile.pierce >= 99 ? tt('tt.through') : `${d.projectile.pierce}`]);
       if (d.projectile.spreadRad > 0.05) lines.push([tt('tt.spread'), `±${Math.round((d.projectile.spreadRad * 180) / Math.PI)}°`]);
+      if (d.projectile.homingTurn) lines.push([tt('tt.homing'), tt('tt.yes')]);
+      if (d.projectile.explosion) {
+        lines.push([tt('tt.explosion'), `${d.projectile.explosion.radius}`]);
+        if (d.projectile.explosion.clusterCount) lines.push([tt('tt.clusters'), `${d.projectile.explosion.clusterCount}`]);
+      }
+      if (d.projectile.ricochet) lines.push([tt('tt.bounces'), `${d.projectile.ricochet.bounces}`]);
+      if (d.projectile.boomerang) lines.push([tt('tt.return'), `${d.projectile.boomerang.outboundRange}`]);
+      if (d.projectile.status?.burnDps) lines.push([tt('tt.burn'), `${d.projectile.status.burnDps}/s · ${d.projectile.status.burnDuration}s`]);
     } else if (d.behavior === 'melee' && d.melee) {
       const cd = d.cooldown / aspd;
+      const strikes = d.melee.strikes ?? 1;
       lines.push([tt('tt.swing'), `${dmg}`]);
       lines.push([tt('tt.cd'), `${cd.toFixed(2)}s`]);
-      lines.push([tt('tt.dps'), `≈${Math.round(dmg / cd)}`]);
+      lines.push([tt('tt.dps'), `≈${Math.round((dmg * strikes) / cd)}`]);
       lines.push([tt('tt.arc'), `${Math.round((d.melee.arcRad * 180) / Math.PI)}°`]);
       lines.push([tt('tt.range'), `${d.range}`]);
       lines.push([tt('tt.kb'), d.melee.knockback >= 400 ? tt('tt.kbStrong') : tt('tt.kbMed')]);
+      if (strikes > 1) lines.push([tt('tt.strikes'), `${strikes}`]);
+      if (d.melee.shape === 'thrust') lines.push([tt('tt.width'), `${d.melee.width}`]);
+      if (d.melee.shockwave) lines.push([tt('tt.shockwave'), `${d.melee.shockwave.maxRadius}`]);
     } else if (d.behavior === 'orbit' && d.orbit) {
       lines.push([tt('tt.touchDmg'), `${dmg}`]);
       lines.push([tt('tt.hitCd'), `${d.orbit.hitCooldown}s`]);
@@ -532,6 +551,33 @@ class ShopScene implements Scene {
       lines.push([tt('tt.targets'), d.evolved ? `${d.chain.targets}` : tt('tt.chainTargetsMore', d.chain.targets)]);
       lines.push([tt('tt.jumpRange'), `${d.chain.jumpRange}`]);
       lines.push([tt('tt.falloff'), tt('tt.perJump', Math.round((1 - d.chain.falloff) * 100))]);
+    } else if (d.behavior === 'pulse' && d.pulse) {
+      const cd = d.cooldown / aspd;
+      lines.push([tt('tt.dmg'), `${dmg}`]);
+      lines.push([tt('tt.cd'), `${cd.toFixed(2)}s`]);
+      lines.push([tt('tt.dps'), `≈${Math.round(dmg / cd)}`]);
+      lines.push([tt('tt.radius'), `${d.pulse.radius}`]);
+      if (d.pulse.status?.freezeDuration) lines.push([tt('tt.freeze'), `${d.pulse.status.freezeDuration}s`]);
+      else if (d.pulse.status?.slowPct) lines.push([tt('tt.slow'), `${d.pulse.status.slowPct}% · ${d.pulse.status.slowDuration}s`]);
+    } else if (d.behavior === 'zone' && d.zone) {
+      const cd = d.cooldown / aspd;
+      const count = d.zone.count ?? 1;
+      const ticks = Math.ceil(d.zone.duration / d.zone.tickRate);
+      const tickDamage = Math.round(dmg * d.zone.tickDamageScale);
+      const impactDamage = Math.round(dmg * d.zone.impactDamageScale);
+      if (impactDamage > 0) lines.push([tt('tt.impact'), `${impactDamage}${count > 1 ? ` ×${count}` : ''}`]);
+      lines.push([tt('tt.tickDmg'), `${tickDamage} ×${ticks}${count > 1 ? ` ×${count}` : ''}`]);
+      lines.push([tt('tt.cd'), `${cd.toFixed(2)}s`]);
+      lines.push([tt('tt.dps'), `≈${Math.round(((impactDamage + tickDamage * ticks) * count) / cd)}`]);
+      lines.push([tt('tt.radius'), `${d.zone.radius}`]);
+      lines.push([tt('tt.duration'), `${d.zone.duration}s`]);
+      if (d.zone.pull) lines.push([tt('tt.pull'), `${d.zone.pull}`]);
+    } else if (d.behavior === 'summon' && d.summon) {
+      lines.push([tt('tt.touchDmg'), `${dmg}`]);
+      lines.push([tt('tt.summons'), `${d.summon.count}`]);
+      lines.push([tt('tt.hitCd'), `${(d.summon.hitCooldown / aspd).toFixed(2)}s`]);
+      lines.push([tt('tt.dps'), `≈${Math.round((dmg * d.summon.count * aspd) / d.summon.hitCooldown)}`]);
+      lines.push([tt('tt.range'), `${d.summon.leashRange}`]);
     }
     const cls = CLASS_DEFS[WEAPON_CLASS[d.id]];
     if (cls) lines.push([tt('tt.class'), tn('s', cls.id, cls.name)]);
