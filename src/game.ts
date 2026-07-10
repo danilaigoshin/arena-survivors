@@ -18,6 +18,8 @@ export interface Scene {
   onEnter?(game: Game): void;
   /** true only for scenes where the touch joystick should claim right-half touches */
   wantsJoystick?: boolean;
+  /** Modal UI in a joystick scene temporarily turns every touch into a UI tap. */
+  blocksJoystick?: boolean;
 }
 
 const FADE_OUT = 0.12;
@@ -124,7 +126,7 @@ export class Game {
         if (!this.pendingScene && this.fadeT >= FADE_OUT + FADE_IN) this.fadeT = 0;
       }
 
-      setJoystickEnabled(this.scene.wantsJoystick === true);
+      setJoystickEnabled(this.scene.wantsJoystick === true && this.scene.blocksJoystick !== true);
       // the run scene is the only joystick scene — it is also the combat-music scene
       setMusicMode(this.scene.wantsJoystick === true ? 'combat' : 'calm');
       const m = getMouse();
@@ -151,6 +153,9 @@ export class Game {
           steps++;
         }
         if (steps === MAX_STEPS) this.acc = 0;
+        // An overlay may have opened during update; release an active joystick
+        // before the next touch can arrive between animation frames.
+        setJoystickEnabled(this.scene.wantsJoystick === true && this.scene.blocksJoystick !== true);
         this.scene.render(this, this.ctx);
       }
       if (!this.viewport.portraitBlocked && this.fadeT > 0) {

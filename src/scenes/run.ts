@@ -55,6 +55,10 @@ const LEVEL_CARD_Y = 96;
 class RunScene implements Scene {
   wantsJoystick = true;
   levelUpChoices: UpgradeDef[] | null = null;
+  private levelUpAction: number | null = null;
+  get blocksJoystick(): boolean {
+    return !!(this.levelUpChoices || this.paused || this.chestReward);
+  }
   /** overlay pop-in: timestamp when the current overlay opened (ms) */
   private overlayOpenAt = 0;
   private overlayWas = false;
@@ -74,6 +78,7 @@ class RunScene implements Scene {
     s.bossUid = 0;
     s.bossDead = false;
     this.levelUpChoices = null;
+    this.levelUpAction = null;
     this.waveEndTimer = -1;
     this.paused = false;
     // newbie hints on the very first run
@@ -119,12 +124,6 @@ class RunScene implements Scene {
     const gap = 24;
     const total = count * cw + (count - 1) * gap;
     return [LEVEL_LAYOUT_W / 2 - total / 2 + i * (cw + gap), LEVEL_CARD_Y, cw, ch];
-  }
-
-  private cardRect(game: Game, i: number, count: number): [number, number, number, number] {
-    const layout = fitToViewport(game.viewport, LEVEL_LAYOUT_W, LEVEL_LAYOUT_H);
-    const [x, y, w, h] = this.virtualCardRect(i, count);
-    return [layout.x + x * layout.scale, layout.y + y * layout.scale, w * layout.scale, h * layout.scale];
   }
 
   update(game: Game, dt: number): void {
@@ -173,19 +172,16 @@ class RunScene implements Scene {
     // level-up overlay pauses the sim
     if (s.pendingLevelUps > 0 && !this.levelUpChoices) {
       this.levelUpChoices = rollUpgradeChoices(p.stats.luck);
+      this.levelUpAction = null;
     }
     if (this.levelUpChoices) {
-      if (game.ui.clicked) {
-        for (let i = 0; i < this.levelUpChoices.length; i++) {
-          const [x, y, w, h] = this.cardRect(game, i, this.levelUpChoices.length);
-          if (game.ui.mx >= x && game.ui.mx <= x + w && game.ui.my >= y && game.ui.my <= y + h) {
-            p.addUpgrade(this.levelUpChoices[i].modifiers);
-            s.pendingLevelUps--;
-            this.levelUpChoices = null;
-            playSfx('click');
-            break;
-          }
-        }
+      const choice = this.levelUpAction;
+      this.levelUpAction = null;
+      if (choice !== null && choice >= 0 && choice < this.levelUpChoices.length) {
+        p.addUpgrade(this.levelUpChoices[choice].modifiers);
+        s.pendingLevelUps--;
+        this.levelUpChoices = null;
+        playSfx('click');
       }
       return;
     }
@@ -611,6 +607,10 @@ class RunScene implements Scene {
           const u = this.levelUpChoices![i];
           const [x, y, cw, ch] = this.virtualCardRect(i, this.levelUpChoices!.length);
           const hover = ui.mx >= x && ui.mx <= x + cw && ui.my >= y && ui.my <= y + ch;
+          if (hover && ui.clicked) {
+            ui.clicked = false;
+            this.levelUpAction = i;
+          }
           const rc = RARITY_COLORS[u.rarity - 1];
           panel(ctx, x, y, cw, ch, {
             radius: 14,
