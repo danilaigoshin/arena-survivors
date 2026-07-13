@@ -51,6 +51,10 @@ export function validateGameContent(): string[] {
       if (!dict[key]) problems.push(`${lang}: missing ${key}`);
     }
     if (lang === 'ru') continue;
+    for (const character of CHARACTERS) {
+      if (!dict[`ab:${character.ability.id}`]) problems.push(`${lang}: missing ab:${character.ability.id}`);
+      if (!dict[`abd:${character.ability.id}`]) problems.push(`${lang}: missing abd:${character.ability.id}`);
+    }
     for (const weapon of WEAPONS) if (!dict[`w:${weapon.id}`]) problems.push(`${lang}: missing w:${weapon.id}`);
   }
   return problems;

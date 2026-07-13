@@ -10,6 +10,7 @@ import { TIER_NAMES, TIER_COLORS, TIER_COOLDOWN } from '../data/weapons';
 import { t } from '../core/i18n';
 import { displayFont } from './font';
 import type { ViewportMetrics } from '../core/viewport';
+import { abilityActiveDuration } from '../data/abilities';
 
 export function renderHud(ctx: CanvasRenderingContext2D, state: RunState, viewport: ViewportMetrics): void {
   const p = state.player;
@@ -129,6 +130,8 @@ export function renderHud(ctx: CanvasRenderingContext2D, state: RunState, viewpo
 
   // ── ability: desktop slot (Space) or big touch button ──
   const ab = p.character.ability;
+  const abilityActive = p.abilityActiveT > 0;
+  const activeFrac = abilityActive ? p.abilityActiveT / abilityActiveDuration(ab.id) : 0;
   if (touch) {
     const c = abilityButtonCircle(viewport);
     const cx = (c.x - offsetX) / hudScale;
@@ -145,13 +148,20 @@ export function renderHud(ctx: CanvasRenderingContext2D, state: RunState, viewpo
     ctx.arc(cx, cy, cr, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
-    ctx.strokeStyle = ready ? '#8be9fdaa' : '#ffffff22';
+    ctx.strokeStyle = abilityActive ? '#ffd23e' : p.abilityRecoveryT > 0 ? '#ff7040' : ready ? '#8be9fdaa' : '#ffffff22';
     ctx.lineWidth = 3;
     ctx.beginPath();
     ctx.arc(cx, cy, cr, 0, Math.PI * 2);
     ctx.stroke();
+    if (abilityActive) {
+      ctx.strokeStyle = '#ffd23e';
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(cx, cy, cr + 4 / hudScale, -Math.PI / 2, -Math.PI / 2 + activeFrac * Math.PI * 2);
+      ctx.stroke();
+    }
     drawIcon(ctx, ab.icon, cx, cy, (viewport.compactLandscape ? 28 : 40) / hudScale);
-    if (!ready) {
+    if (!ready && !abilityActive) {
       // cooldown sweep
       ctx.fillStyle = '#000000a0';
       ctx.beginPath();
@@ -198,9 +208,14 @@ export function renderHud(ctx: CanvasRenderingContext2D, state: RunState, viewpo
     ctx.fillRect(pcx + 2 * pauseK, pcy - 8 * pauseK, 5 * pauseK, 16 * pauseK);
   } else {
     const ax = 14 + MAX_WEAPON_SLOTS * (slotSize + 8) + 10;
-    panel(ctx, ax, sy - 6, 52, 52, { radius: 12, fill: '#14141ecc', border: p.abilityCd <= 0 ? '#8be9fd88' : '#ffffff22', glow: p.abilityCd <= 0 ? '#8be9fd44' : undefined });
+    panel(ctx, ax, sy - 6, 52, 52, {
+      radius: 12,
+      fill: '#14141ecc',
+      border: abilityActive ? '#ffd23e' : p.abilityRecoveryT > 0 ? '#ff704088' : p.abilityCd <= 0 ? '#8be9fd88' : '#ffffff22',
+      glow: abilityActive ? '#ffd23e44' : p.abilityCd <= 0 ? '#8be9fd44' : undefined,
+    });
     drawIcon(ctx, ab.icon, ax + 26, sy + 20, 28);
-    if (p.abilityCd > 0) {
+    if (p.abilityCd > 0 && !abilityActive) {
       const frac = p.abilityCd / ab.cooldown;
       ctx.save();
       roundRect(ctx, ax, sy - 6, 52, 52, 12);
@@ -209,7 +224,14 @@ export function renderHud(ctx: CanvasRenderingContext2D, state: RunState, viewpo
       ctx.fillRect(ax, sy - 6 + 52 * (1 - frac), 52, 52 * frac);
       ctx.restore();
     }
-    ctx.fillStyle = p.abilityCd <= 0 ? '#8be9fd' : '#667';
+    if (abilityActive) {
+      ctx.fillStyle = '#ffd23e';
+      ctx.fillRect(ax + 4, sy + 41, 44 * activeFrac, 3);
+    } else if (p.abilityRecoveryT > 0) {
+      ctx.fillStyle = '#ff7040';
+      ctx.fillRect(ax + 4, sy + 41, 44 * (p.abilityRecoveryT / 2), 3);
+    }
+    ctx.fillStyle = abilityActive ? '#ffd23e' : p.abilityRecoveryT > 0 ? '#ff7040' : p.abilityCd <= 0 ? '#8be9fd' : '#667';
     ctx.font = 'bold 10px system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText('SPACE', ax + 26, sy + 54);

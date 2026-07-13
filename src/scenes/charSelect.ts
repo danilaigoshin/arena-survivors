@@ -264,48 +264,36 @@ class CharSelectScene implements Scene {
     ctx.font = '12px system-ui, sans-serif';
     wrapText(ctx, tn('cd', c.id, c.desc), pcx, py + 160, PREVIEW_W - 40, 15);
 
-    // weapon + ability rows
+    // weapon row
     const wd = weaponById(c.weapon);
     ctx.textAlign = 'left';
-    drawIcon(ctx, weaponIcon(wd.id), x + 34, py + 200, 18);
+    drawIcon(ctx, weaponIcon(wd.id), x + 34, py + 195, 18);
     ctx.fillStyle = '#8be9fd';
     ctx.font = 'bold 13px system-ui, sans-serif';
-    ctx.fillText(tn('w', wd.id, wd.name), x + 50, py + 201);
+    ctx.fillText(tn('w', wd.id, wd.name), x + 50, py + 196);
     const cls = c.weaponClass === 'all' ? null : CLASS_DEFS[c.weaponClass];
     ctx.textAlign = 'right';
     ctx.fillStyle = cls?.color ?? '#8dff9a';
     ctx.font = 'bold 11px system-ui, sans-serif';
-    ctx.fillText(tt('hero.arsenal', cls ? tn('s', cls.id, cls.name) : tt('hero.anyClass')), x + PREVIEW_W - 22, py + 201);
+    ctx.fillText(tt('hero.arsenal', cls ? tn('s', cls.id, cls.name) : tt('hero.anyClass')), x + PREVIEW_W - 22, py + 196);
 
-    drawIcon(ctx, c.ability.icon, x + 34, py + 224, 18);
-    ctx.textAlign = 'left';
-    ctx.fillStyle = '#ffd23e';
-    ctx.fillText(tn('ab', c.ability.id, c.ability.name), x + 50, py + 225);
-    const abW = ctx.measureText(tn('ab', c.ability.id, c.ability.name)).width;
-    ctx.fillStyle = '#667';
-    ctx.font = '12px system-ui, sans-serif';
-    ctx.fillText(tt('hero.cd', c.ability.cooldown), x + 56 + abW, py + 225);
-    ctx.fillStyle = '#8a8aa6';
-    ctx.font = '11px system-ui, sans-serif';
-    ctx.fillText(tn('abd', c.ability.id, c.ability.desc), x + 50, py + 242, PREVIEW_W - 70);
-
-    // divider
+    // divider between the loadout and the comparable stats
     ctx.strokeStyle = '#ffffff14';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(x + 20, py + 256);
-    ctx.lineTo(x + PREVIEW_W - 20, py + 256);
+    ctx.moveTo(x + 20, py + 208);
+    ctx.lineTo(x + PREVIEW_W - 20, py + 208);
     ctx.stroke();
 
     // comparable stat bars (fixed 5 rows for every hero)
     const rows = statRows(c);
     rows.forEach((r, i) => {
-      const ry = py + 272 + i * 21;
+      const ry = py + 224 + i * 16;
       ctx.fillStyle = '#8a8aa6';
       ctx.font = '11px system-ui, sans-serif';
       ctx.textAlign = 'left';
       ctx.fillText(STAT_LABELS[r.key].replace(' %', ''), x + 22, ry, 96);
-      bar(ctx, x + 124, ry - 5, 180, 10, r.frac, r.color);
+      bar(ctx, x + 124, ry - 4, 180, 8, r.frac, r.color);
       ctx.textAlign = 'right';
       if (r.delta !== undefined) {
         ctx.fillStyle = r.delta > 0 ? '#9fdca0' : '#e08a8a';
@@ -317,6 +305,30 @@ class CharSelectScene implements Scene {
       }
       ctx.textAlign = 'left';
     });
+
+    // The ability is the final, separate section of the hero card. Locked
+    // heroes leave room below it for their unlock action.
+    const abilityY = py + (locked ? 298 : 316);
+    const abilityH = locked ? 66 : 80;
+    panel(ctx, x + 20, abilityY, PREVIEW_W - 40, abilityH, {
+      radius: 10,
+      fill: ['#1b1a24', '#13131b'],
+      border: '#ffd23e33',
+    });
+    drawIcon(ctx, c.ability.icon, x + 39, abilityY + 17, 22);
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#ffd23e';
+    ctx.font = 'bold 13px system-ui, sans-serif';
+    ctx.fillText(tn('ab', c.ability.id, c.ability.name), x + 57, abilityY + 17, 230);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#77778c';
+    ctx.font = '12px system-ui, sans-serif';
+    ctx.fillText(tt('hero.cd', c.ability.cooldown), x + PREVIEW_W - 32, abilityY + 17);
+
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#b5b5c8';
+    ctx.font = '11px system-ui, sans-serif';
+    wrapText(ctx, tn('abd', c.ability.id, c.ability.desc), x + 32, abilityY + 38, PREVIEW_W - 64, 13);
 
     // fixed action row: unlock button for locked heroes
     if (locked) {

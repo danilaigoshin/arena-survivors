@@ -7,6 +7,7 @@ import { weaponIcon } from './icons';
 import { shakeOffsetX, shakeOffsetY, kickOffsetX, kickOffsetY } from './fx';
 import { drawFx } from './fx';
 import { drawLiveDecor } from './floor';
+import { ABILITY_BALANCE } from '../data/abilities';
 
 const CHAIN_FX_DUR = 0.14;
 
@@ -123,6 +124,80 @@ function drawWeaponAreas(ctx: CanvasRenderingContext2D, state: RunState, time: n
         ctx.fillStyle = r % 2 ? '#ffffff' : color;
         ctx.fillRect(area.x + Math.cos(a) * area.radius * 0.55 - 2, area.y + Math.sin(a) * area.radius * 0.55 - 2, 4, 4);
       }
+    }
+    ctx.restore();
+  }
+}
+
+function drawCharacterAbility(ctx: CanvasRenderingContext2D, state: RunState, time: number): void {
+  const p = state.player;
+  const id = p.character.ability.id;
+  if (id === 'arcane_circle' && p.abilityActiveT > 0) {
+    const radius = ABILITY_BALANCE.arcaneCircle.radius;
+    const pulse = 1 + Math.sin(time * 5) * 0.025;
+    const fade = Math.min(1, p.abilityActiveT / 0.4);
+    ctx.save();
+    ctx.globalAlpha = fade * 0.14;
+    ctx.fillStyle = '#b18cff';
+    ctx.beginPath();
+    ctx.arc(p.abilityX, p.abilityY, radius * pulse, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = fade * 0.8;
+    ctx.strokeStyle = '#c9a7ff';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(p.abilityX, p.abilityY, radius * pulse, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.lineWidth = 2;
+    for (let i = 0; i < 6; i++) {
+      const a = time * 0.7 + (i / 6) * Math.PI * 2;
+      const x = p.abilityX + Math.cos(a) * radius * 0.72;
+      const y = p.abilityY + Math.sin(a) * radius * 0.72;
+      ctx.strokeRect(x - 5, y - 5, 10, 10);
+    }
+    ctx.restore();
+  }
+
+  if (id === 'adaptation' && p.abilityActiveT > 0) {
+    const colors = ['#8be9fd', '#ffd23e', '#b18cff'];
+    ctx.save();
+    ctx.lineWidth = 4;
+    for (let i = 0; i < 3; i++) {
+      ctx.strokeStyle = colors[i];
+      ctx.globalAlpha = i < Math.round(p.abilityPower / ABILITY_BALANCE.adaptation.bonusPerClass) ? 0.9 : 0.12;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 30 + i * 5, time * 1.8 + i * 2.1, time * 1.8 + i * 2.1 + 1.35);
+      ctx.stroke();
+    }
+    ctx.restore();
+  } else if (id === 'whirlwind' && p.abilityActiveT > 0) {
+    ctx.save();
+    ctx.strokeStyle = '#ffd23e';
+    ctx.lineCap = 'round';
+    ctx.shadowColor = '#ffd23e';
+    ctx.shadowBlur = 10;
+    for (let i = 0; i < 3; i++) {
+      ctx.globalAlpha = 0.85 - i * 0.18;
+      ctx.lineWidth = 6 - i;
+      const a = time * 12 + i * 2.05;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 65 + i * 34, a, a + 1.3);
+      ctx.stroke();
+    }
+    ctx.restore();
+  } else if (id === 'overheat' && (p.abilityActiveT > 0 || p.abilityRecoveryT > 0)) {
+    const active = p.abilityActiveT > 0;
+    ctx.save();
+    ctx.strokeStyle = active ? '#ff9a45' : '#7a4a40';
+    ctx.globalAlpha = active ? 0.9 : 0.45;
+    ctx.lineWidth = active ? 4 : 2;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 33 + Math.sin(time * 12) * 3, 0, Math.PI * 2);
+    ctx.stroke();
+    for (let i = 0; i < 5; i++) {
+      const a = time * (active ? 5 : 1.5) + i * Math.PI * 0.4;
+      ctx.fillStyle = active ? '#ffd06a' : '#706068';
+      ctx.fillRect(p.x + Math.cos(a) * 38 - 2, p.y + Math.sin(a) * 24 - 2, 4, 4);
     }
     ctx.restore();
   }
@@ -273,6 +348,7 @@ export function renderWorld(ctx: CanvasRenderingContext2D, state: RunState, cam:
   }
 
   drawWeaponAreas(ctx, state, time);
+  drawCharacterAbility(ctx, state, time);
 
   // battlefield chests: bobbing with a golden pulse
   for (const c of state.chests) {
@@ -365,12 +441,13 @@ export function renderWorld(ctx: CanvasRenderingContext2D, state: RunState, cam:
 
   drawHolsteredWeapons(ctx, state, time);
 
-  // player (blink while invulnerable)
+  // player (blinks briefly after taking damage)
   const playerFlip = Math.abs(p.aimAngle) > Math.PI / 2;
   if (p.iframes <= 0 || Math.floor(p.iframes * 20) % 2 === 0) {
     const squash = p.moving ? Math.sin(time * 12) * 0.05 : Math.sin(time * 3) * 0.03;
     const frame = p.moving ? 1 + (Math.floor(time * 10) % Math.max(1, frameCount(p.character.sprite) - 1)) : 0;
-    drawSprite(ctx, p.character.sprite, p.x, p.y, p.radius * 2.6, { squash, flip: playerFlip, frame });
+    const rotate = p.character.ability.id === 'whirlwind' && p.abilityActiveT > 0 ? time * 12 : undefined;
+    drawSprite(ctx, p.character.sprite, p.x, p.y, p.radius * 2.6, { squash, flip: playerFlip, frame, rotate });
   }
 
   drawSecondHand(ctx, state, time);

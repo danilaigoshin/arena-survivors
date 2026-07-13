@@ -16,7 +16,9 @@ import type { UpgradeDef } from '../data/upgrades';
 import { generateMap, pushOutOfObstacles, hitsObstacle } from '../data/maps';
 import { rollChestLoot, type ShopOffer } from '../systems/shop';
 import { WeaponInstance } from '../entities/weapon';
-import { MAX_TIER, TIER_NAMES } from '../data/weapons';
+import { MAX_TIER, TIER_DAMAGE, TIER_NAMES } from '../data/weapons';
+import { WEAPON_CLASS } from '../data/sets';
+import { ABILITY_BALANCE } from '../data/abilities';
 import { spawnBurst, spawnRing } from '../render/fx';
 import { RARITY_COLORS, rarityName } from '../data/rarity';
 import { t, tn } from '../core/i18n';
@@ -85,6 +87,7 @@ class RunScene implements Scene {
     this.hintTimer = s.wave === 1 && loadMeta().stats.runs === 0 ? 8 : 0;
     // every wave starts at full health (Brotato-style)
     s.player.hp = s.player.stats.maxHp;
+    s.player.clearAbilityEffects();
     s.projectiles.clear();
     s.areaEffects.clear();
     // fresh map every wave
@@ -203,18 +206,15 @@ class RunScene implements Scene {
     moveAxis(axis);
     norm(axis.x, axis.y, dir);
     p.moving = axis.x !== 0 || axis.y !== 0;
-    if (p.moving) {
-      p.lastDirX = dir.x;
-      p.lastDirY = dir.y;
-    }
 
     // active ability (Space)
     p.abilityCd = Math.max(0, p.abilityCd - dt);
     if (consumeKeyPress('Space') && p.abilityCd <= 0) {
       this.useAbility(game);
     }
+    p.updateAbilityTimers(dt);
     p.slowT = Math.max(0, p.slowT - dt);
-    const moveMult = p.slowT > 0 ? 0.6 : 1;
+    const moveMult = (p.slowT > 0 ? 0.6 : 1) * p.abilityMoveSpeedMultiplier();
     p.x = clamp(p.x + dir.x * p.stats.moveSpeed * moveMult * dt, p.radius, ARENA_W - p.radius);
     p.y = clamp(p.y + dir.y * p.stats.moveSpeed * moveMult * dt, p.radius, ARENA_H - p.radius);
     pushOutOfObstacles(s.obstacles, p);
@@ -233,6 +233,7 @@ class RunScene implements Scene {
       (i) => s.enemies.items[i].y,
     );
 
+    this.updateAbilityEffects(game, dt);
     updateWeapons(s, dt);
     updateProjectiles(s, dt);
     updateAreaEffects(s, dt);
@@ -341,44 +342,69 @@ class RunScene implements Scene {
 
   /** Character active ability on Space. */
   private useAbility(game: Game): void {
-    const s = game.state;
-    const p = s.player;
+    const p = game.state.player;
     const ab = p.character.ability;
     p.abilityCd = ab.cooldown;
-    if (ab.id === 'magnet') {
-      for (let i = 0; i < s.pickups.count; i++) s.pickups.items[i].magnet = true;
-      spawnRing(p.x, p.y, '#8be9fd');
-      playSfx('pickup');
-    } else if (ab.id === 'slam') {
-      const dmg = Math.round(30 * (1 + p.stats.damagePct / 100));
-      s.grid.queryCircle(p.x, p.y, 220, (i) => {
+    p.activateAbility();
+    if (ab.id === 'adaptation') {
+      spawnBurst(p.x, p.y, '#8dff9a', 12);
+      spawnRing(p.x, p.y, '#8dff9a');
+      playSfx('levelup');
+    } else if (ab.id === 'whirlwind') {
+      spawnBurst(p.x, p.y, '#ffd23e', 10);
+      playSfx('heavy');
+    } else if (ab.id === 'overheat') {
+      spawnBurst(p.x, p.y, '#ff9a45', 12);
+      spawnRing(p.x, p.y, '#ff9a45');
+      playSfx('fire');
+    } else if (ab.id === 'arcane_circle') {
+      spawnBurst(p.x, p.y, '#b18cff', 14);
+      spawnRing(p.x, p.y, '#b18cff');
+      playSfx('magic');
+    }
+  }
+
+  private updateAbilityEffects(game: Game, dt: number): void {
+    const s = game.state;
+    const p = s.player;
+    if (p.character.ability.id === 'whirlwind' && p.abilityActiveT > 0 && p.abilityPulseCount < ABILITY_BALANCE.whirlwind.hits) {
+      p.abilityPulseT -= dt;
+      while (p.abilityPulseT <= 0 && p.abilityPulseCount < ABILITY_BALANCE.whirlwind.hits) {
+        let strongestBladeDamage = 0;
+        for (const w of p.weapons) {
+          if (WEAPON_CLASS[w.def.id] !== 'blade') continue;
+          strongestBladeDamage = Math.max(strongestBladeDamage, w.def.damage * TIER_DAMAGE[w.tier - 1]);
+        }
+        const rawDamage = Math.max(1, strongestBladeDamage * ABILITY_BALANCE.whirlwind.damageScale * (1 + p.stats.damagePct / 100));
+        s.grid.queryCircle(p.x, p.y, ABILITY_BALANCE.whirlwind.radius + 40, (i) => {
+          const e = s.enemies.items[i];
+          if (!e.active || e.hp <= 0) return;
+          const dx = e.x - p.x;
+          const dy = e.y - p.y;
+          const rr = ABILITY_BALANCE.whirlwind.radius + e.radius;
+          if (dx * dx + dy * dy > rr * rr) return;
+          const len = Math.max(1, Math.hypot(dx, dy));
+          damageEnemy(s, e, rawDamage, false, (dx / len) * 220, (dy / len) * 220, '#ffd23e');
+        });
+        p.abilityPulseCount++;
+        p.abilityPulseT += ABILITY_BALANCE.whirlwind.hitInterval;
+        spawnRing(p.x, p.y, '#ffd23e');
+        addShake(3);
+        playSfx('shoot');
+      }
+    }
+
+    if (p.character.ability.id === 'arcane_circle' && p.abilityActiveT > 0) {
+      s.grid.queryCircle(p.abilityX, p.abilityY, ABILITY_BALANCE.arcaneCircle.radius + 40, (i) => {
         const e = s.enemies.items[i];
         if (!e.active || e.hp <= 0) return;
-        const dx = e.x - p.x;
-        const dy = e.y - p.y;
-        if (dx * dx + dy * dy > 200 * 200) return;
-        const len = Math.max(1, Math.hypot(dx, dy));
-        damageEnemy(s, e, dmg, false, (dx / len) * 700, (dy / len) * 700);
+        const dx = e.x - p.abilityX;
+        const dy = e.y - p.abilityY;
+        const rr = ABILITY_BALANCE.arcaneCircle.radius + e.radius;
+        if (dx * dx + dy * dy > rr * rr) return;
+        e.slowPct = Math.max(e.slowPct, ABILITY_BALANCE.arcaneCircle.slowPct);
+        e.slowT = Math.max(e.slowT, 0.1);
       });
-      spawnRing(p.x, p.y, '#ffd23e');
-      addShake(8);
-      playSfx('hurt');
-    } else if (ab.id === 'dash') {
-      p.x = clamp(p.x + p.lastDirX * 220, p.radius, ARENA_W - p.radius);
-      p.y = clamp(p.y + p.lastDirY * 220, p.radius, ARENA_H - p.radius);
-      pushOutOfObstacles(s.obstacles, p);
-      p.iframes = Math.max(p.iframes, 0.5);
-      spawnBurst(p.x, p.y, '#8be9fd', 8);
-      playSfx('shoot');
-    } else if (ab.id === 'blink') {
-      spawnBurst(p.x, p.y, '#b18cff', 10);
-      p.x = clamp(p.x + p.lastDirX * 320, p.radius, ARENA_W - p.radius);
-      p.y = clamp(p.y + p.lastDirY * 320, p.radius, ARENA_H - p.radius);
-      pushOutOfObstacles(s.obstacles, p);
-      p.iframes = Math.max(p.iframes, 0.25);
-      spawnBurst(p.x, p.y, '#b18cff', 12);
-      spawnRing(p.x, p.y, '#b18cff');
-      playSfx('levelup');
     }
   }
 
@@ -419,6 +445,7 @@ class RunScene implements Scene {
   private beginWaveEnd(s: Game['state']): void {
     this.waveEndTimer = WAVE_END_DELAY;
     s.vacuum = true;
+    s.player.clearAbilityEffects();
     // remaining enemies die and drop their materials
     for (let i = 0; i < s.enemies.count; i++) {
       const e = s.enemies.items[i];

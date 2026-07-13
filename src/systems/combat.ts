@@ -383,7 +383,7 @@ export function updateAreaEffects(state: RunState, dt: number): void {
   }
 }
 
-function updateSummons(state: RunState, w: WeaponInstance, dt: number, rawDamage: number, speedMult: number): void {
+function updateSummons(state: RunState, w: WeaponInstance, dt: number, rawDamage: number, baseSpeedMult: number, abilitySpeedMult: number): void {
   const summon = w.def.summon!;
   const count = Math.min(summon.count, w.summonX.length);
   let spawned = false;
@@ -398,7 +398,7 @@ function updateSummons(state: RunState, w: WeaponInstance, dt: number, rawDamage
   if (spawned) playSfx('summon');
   w.summonCount = count;
   for (let i = 0; i < count; i++) {
-    w.summonHitCd[i] = Math.max(0, w.summonHitCd[i] - dt);
+    w.summonHitCd[i] = Math.max(0, w.summonHitCd[i] - dt * abilitySpeedMult);
     w.summonFlash[i] = Math.max(0, w.summonFlash[i] - dt);
     const targetIdx = state.grid.nearest(w.summonX[i], w.summonY[i], summon.leashRange);
     const target = targetIdx >= 0 ? state.enemies.items[targetIdx] : null;
@@ -418,7 +418,7 @@ function updateSummons(state: RunState, w: WeaponInstance, dt: number, rawDamage
       if (dist2(w.summonX[i], w.summonY[i], target.x, target.y) <= rr * rr) {
         norm(target.x - w.summonX[i], target.y - w.summonY[i], dir);
         damageEnemy(state, target, rawDamage, critRoll(state), dir.x * 100, dir.y * 100, '#b18cff', w.summonX[i], w.summonY[i]);
-        w.summonHitCd[i] = summon.hitCooldown / speedMult;
+        w.summonHitCd[i] = summon.hitCooldown / baseSpeedMult;
         w.summonFlash[i] = 0.12;
       }
     }
@@ -427,12 +427,15 @@ function updateSummons(state: RunState, w: WeaponInstance, dt: number, rawDamage
 
 export function updateWeapons(state: RunState, dt: number): void {
   const p = state.player;
-  const dmgMult = 1 + p.stats.damagePct / 100;
-  const speedMult = 1 + p.stats.attackSpeedPct / 100;
+  const baseDmgMult = 1 + p.stats.damagePct / 100;
+  const baseSpeedMult = 1 + p.stats.attackSpeedPct / 100;
 
   state.hitStopCd = Math.max(0, state.hitStopCd - dt);
   for (const w of p.weapons) {
     const def = w.def;
+    const dmgMult = baseDmgMult * p.abilityDamageMultiplier(def.id);
+    const abilitySpeedMult = p.abilityAttackSpeedMultiplier(def.id);
+    const speedMult = baseSpeedMult * abilitySpeedMult;
     const tierDmg = TIER_DAMAGE[w.tier - 1];
     const tierCd = TIER_COOLDOWN[w.tier - 1];
     w.recoil = Math.max(0, w.recoil - dt * 9);
@@ -440,7 +443,7 @@ export function updateWeapons(state: RunState, dt: number): void {
 
     if (def.behavior === 'summon' && def.summon) {
       w.orbitAngle += dt * 1.8;
-      updateSummons(state, w, dt, def.damage * dmgMult * tierDmg, speedMult);
+      updateSummons(state, w, dt, def.damage * dmgMult * tierDmg, baseSpeedMult, abilitySpeedMult);
       continue;
     }
 
@@ -470,7 +473,9 @@ export function updateWeapons(state: RunState, dt: number): void {
       continue;
     }
 
-    w.cooldownTimer -= dt;
+    // Temporary ability buffs accelerate the remaining cooldown immediately;
+    // permanent attack speed stays baked into the cooldown's base duration.
+    w.cooldownTimer -= dt * abilitySpeedMult;
     w.swipeTimer = Math.max(0, w.swipeTimer - dt);
     if (w.cooldownTimer > 0) continue;
 
@@ -479,7 +484,7 @@ export function updateWeapons(state: RunState, dt: number): void {
     const target = state.enemies.items[targetIdx];
     if (!target.active || target.hp <= 0) continue;
 
-    w.cooldownTimer = (def.cooldown * tierCd) / speedMult;
+    w.cooldownTimer = (def.cooldown * tierCd) / baseSpeedMult;
     w.recoil = 1;
     const angle = Math.atan2(target.y - p.y, target.x - p.x);
     p.aimAngle = angle;
@@ -490,7 +495,7 @@ export function updateWeapons(state: RunState, dt: number): void {
       else if (def.projectile.explosion) playSfx('heavy');
       else playSfx('shoot');
       for (let n = 0; n < def.projectile.count; n++) {
-        const spread = def.projectile.spreadRad;
+        const spread = def.projectile.spreadRad * p.abilitySpreadMultiplier(def.id);
         const offset = def.projectile.pattern === 'fan' && def.projectile.count > 1
           ? ((n / (def.projectile.count - 1)) - 0.5) * spread * 2
           : range(-spread, spread);
