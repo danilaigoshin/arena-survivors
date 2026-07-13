@@ -52,8 +52,8 @@ export const CHARACTERS: readonly CharacterDef[] = [
     desc: 'Скорострельность и мобильность ценой живучести.',
     weapon: 'smg',
     weaponClass: 'gunner',
-    ability: { id: 'dash', name: 'Рывок', icon: 'i_speed', cooldown: 5, desc: 'Рывок с неуязвимостью' },
-    mods: { attackSpeedPct: 25, moveSpeed: 15, maxHp: -15 },
+    ability: { id: 'dash', name: 'Рывок', icon: 'i_speed', cooldown: 6, desc: 'Рывок с неуязвимостью' },
+    mods: { attackSpeedPct: 15, moveSpeed: 10, maxHp: -20 },
   },
   {
     id: 'mage',
