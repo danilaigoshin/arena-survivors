@@ -1,4 +1,5 @@
 import { ENEMIES, type EnemyDef } from '../data/enemies';
+import { getEndlessWaveScaling } from '../data/endless';
 
 let nextUid = 1;
 
@@ -51,24 +52,28 @@ export class Enemy {
     this.defIdx = defIdx;
     this.x = x;
     this.y = y;
-    // waves 11-20 keep ramping past the per-def linear scale; endless (21+) ramps harder.
-    // Bosses have authored HP for their intro wave — only the endless ramp touches them.
+    // Waves 11-20 use the authored campaign ramp. Endless mode then applies a
+    // multiplicative step per wave so adjacent waves never flatten out.
     const isBossDef = def.ai === 'boss';
-    const late = !isBossDef && wave > 10 ? 0.15 * Math.pow(wave - 10, 1.25) : 0;
-    const endless = wave > 20 ? (isBossDef ? 0.2 : 0.3) * Math.pow(wave - 20, 1.5) : 0;
-    const lateDmg = (!isBossDef && wave > 10 ? 0.04 * (wave - 10) : 0) + (wave > 20 ? 0.08 * (wave - 20) : 0);
+    const endless = getEndlessWaveScaling(wave);
+    const campaignWave = wave - endless.steps;
+    const late = !isBossDef && campaignWave > 10 ? 0.15 * Math.pow(campaignWave - 10, 1.25) : 0;
+    const lateDmg = !isBossDef && campaignWave > 10 ? 0.04 * (campaignWave - 10) : 0;
+    // Reaper is an earlier, lower-HP boss; normalize its endless appearances to
+    // the Overlord's baseline before applying the shared per-wave multiplier.
+    const endlessBossHpMult = isBossDef && endless.steps > 0 && def.id === 'reaper' ? 4 : 1;
     this.elite = elite;
-    const hpMult = (1 + def.hpScale * (wave - 1) + late + endless) * (elite ? 4 : 1);
-    const dmgMult = (1 + def.dmgScale * (wave - 1) + lateDmg) * (elite ? 1.5 : 1);
+    const hpMult = (1 + def.hpScale * (campaignWave - 1) + late) * endless.hpMult * endlessBossHpMult * (elite ? 4 : 1);
+    const dmgMult = (1 + def.dmgScale * (campaignWave - 1) + lateDmg) * endless.damageMult * (elite ? 1.5 : 1);
     this.maxHp = Math.round(def.hp * hpMult);
     this.hp = this.maxHp;
     this.radius = def.radius * (elite ? 1.35 : 1);
-    this.speed = def.speed * (elite ? 0.9 : 1);
+    this.speed = def.speed * endless.speedMult * (elite ? 0.9 : 1);
     this.contactDamage = Math.round(def.contactDamage * dmgMult);
     this.hitFlash = 0;
     this.knockX = 0;
     this.knockY = 0;
-    this.shootCd = def.shoot ? def.shoot.cooldown * (0.5 + Math.random() * 0.5) : 0;
+    this.shootCd = def.shoot ? (def.shoot.cooldown * (0.5 + Math.random() * 0.5)) / endless.attackRateMult : 0;
     this.burnT = 0;
     this.burnDps = 0;
     this.burnTick = 0;
@@ -82,7 +87,7 @@ export class Enemy {
     this.phase = 0;
     this.dashVx = 0;
     this.dashVy = 0;
-    this.summonCd = 6;
+    this.summonCd = 6 / endless.attackRateMult;
     this.burstType = '';
     this.burstN = 0;
     this.burstT = 0;

@@ -6,6 +6,7 @@ import { ARENA_W, ARENA_H } from '../config';
 import { clamp, lerp } from '../utils/math';
 import { pickWeighted, range, chance } from '../core/rng';
 import { hitsObstacle } from '../data/maps';
+import { getEndlessWaveScaling } from '../data/endless';
 
 /** Point just outside the viewport but inside (or near) the arena. */
 function spawnPoint(cam: Camera, out: { x: number; y: number }): void {
@@ -61,6 +62,7 @@ export function spawnBossNow(state: RunState, cam: Camera): void {
 
 export function updateSpawner(state: RunState, cam: Camera, dt: number): void {
   const waveDef = getWaveDef(state.wave);
+  const endless = getEndlessWaveScaling(state.wave);
   const elapsed = waveDef.duration - state.waveTimer;
   const t = clamp(elapsed / waveDef.duration, 0, 1);
   const interval = lerp(waveDef.spawnInterval[0], waveDef.spawnInterval[1], t);
@@ -78,8 +80,10 @@ export function updateSpawner(state: RunState, cam: Camera, dt: number): void {
     if (!e) break;
     spawnPointClear(state, cam, pt, 26);
     const entry = pickWeighted(waveDef.table);
-    // elites appear from wave 5, chance grows with the wave
-    const elite = state.wave >= 5 && chance(Math.min(0.18, 0.03 + state.wave * 0.01) * state.difficulty.eliteMult);
+    // Endless waves add a little more elite pressure on every step.
+    const baseEliteChance = Math.min(0.18, 0.03 + state.wave * 0.01) + endless.eliteChanceBonus;
+    const eliteChance = Math.min(0.8, baseEliteChance * state.difficulty.eliteMult);
+    const elite = state.wave >= 5 && chance(eliteChance);
     e.init(ENEMY_INDEX[entry.defId], pt.x, pt.y, state.wave, elite);
     applyDifficulty(state, e);
   }

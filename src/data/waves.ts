@@ -1,3 +1,5 @@
+import { getEndlessWaveScaling } from './endless';
+
 export interface SpawnEntry {
   defId: string;
   weight: number;
@@ -19,20 +21,41 @@ export interface WaveDef {
 export function getWaveDef(wave: number): WaveDef {
   if (wave <= WAVES.length) return WAVES[wave - 1];
   const k = wave - 10;
+  const endless = getEndlessWaveScaling(wave);
   // boss waves: 15 — Reaper, 20 — final Overlord, endless bosses alternate
   const bossId = wave === 15 ? 'reaper' : wave === 20 ? 'overlord' : wave > 20 && wave % 5 === 0 ? (wave % 10 === 5 ? 'reaper' : 'overlord') : null;
   if (bossId) {
     return {
       duration: 999,
-      spawnInterval: [1.4, 0.9],
+      spawnInterval: [1.4 / endless.spawnRateMult, 0.9 / endless.spawnRateMult],
       table: [
         { defId: 'chaser', weight: 3 },
         { defId: 'runner', weight: 2 },
         { defId: 'sprinter', weight: 1 },
         { defId: 'tank', weight: 1 },
       ],
-      maxAlive: 100,
+      maxAlive: Math.min(220, 100 + endless.steps * 3),
       boss: bossId,
+    };
+  }
+  if (endless.steps > 0) {
+    return {
+      duration: 60,
+      spawnInterval: [0.16 / endless.spawnRateMult, 0.07 / endless.spawnRateMult],
+      table: [
+        { defId: 'chaser', weight: 4 },
+        { defId: 'runner', weight: 3 },
+        { defId: 'sprinter', weight: 2.5 },
+        { defId: 'bomber', weight: 1.6 },
+        { defId: 'shieldbearer', weight: 1.6 },
+        { defId: 'summoner', weight: 1.1 },
+        { defId: 'splitter', weight: 1.6 },
+        { defId: 'hopper', weight: 1.4 },
+        { defId: 'frost', weight: 1.3 },
+        { defId: 'shooter', weight: 2.5 },
+        { defId: 'tank', weight: 2.5 },
+      ],
+      maxAlive: Math.min(390, 320 + endless.steps * 3),
     };
   }
   return {

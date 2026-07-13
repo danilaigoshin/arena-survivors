@@ -4,6 +4,7 @@ import { ARENA_W, ARENA_H } from '../config';
 import { pushOutOfObstacles } from '../data/maps';
 import { ENEMY_INDEX } from '../data/enemies';
 import { enemyMoveMultiplier } from './combat';
+import { getEndlessWaveScaling, type EndlessWaveScaling } from '../data/endless';
 
 const dir = { x: 0, y: 0 };
 
@@ -18,14 +19,14 @@ function bossSummon(state: RunState, e: import('../entities/enemy').Enemy, count
   }
 }
 
-function bossFire(state: RunState, e: import('../entities/enemy').Enemy, angle: number): void {
+function bossFire(state: RunState, e: import('../entities/enemy').Enemy, angle: number, endless: EndlessWaveScaling): void {
   const sh = e.def.shoot!;
   state.spawnProjectile(
     e.x,
     e.y,
-    Math.cos(angle) * sh.projSpeed,
-    Math.sin(angle) * sh.projSpeed,
-    Math.round(sh.damage * state.difficulty.dmgMult),
+    Math.cos(angle) * sh.projSpeed * endless.speedMult,
+    Math.sin(angle) * sh.projSpeed * endless.speedMult,
+    Math.round(sh.damage * state.difficulty.dmgMult * endless.damageMult),
     0,
     4,
     false,
@@ -36,7 +37,7 @@ function bossFire(state: RunState, e: import('../entities/enemy').Enemy, angle: 
  * Bosses share one state machine: chase → pick an attack from def.attacks.
  * Stages by remaining HP make everything denser and faster.
  */
-function bossUpdate(state: RunState, e: import('../entities/enemy').Enemy, dt: number, moveMult: number): void {
+function bossUpdate(state: RunState, e: import('../entities/enemy').Enemy, dt: number, moveMult: number, endless: EndlessWaveScaling): void {
   const p = state.player;
   const def = e.def;
   const frac = e.hp / e.maxHp;
@@ -53,15 +54,15 @@ function bossUpdate(state: RunState, e: import('../entities/enemy').Enemy, dt: n
         const aim = Math.atan2(p.y - e.y, p.x - e.x);
         const n = 7 + stage * 2;
         for (let i = 0; i < n; i++) {
-          bossFire(state, e, aim + ((i / (n - 1)) - 0.5) * 1.0);
+          bossFire(state, e, aim + ((i / (n - 1)) - 0.5) * 1.0, endless);
         }
-        e.burstT = 0.45;
+        e.burstT = 0.45 / endless.attackRateMult;
       } else if (e.burstType === 'spiral') {
         for (let s = 0; s < 2; s++) {
-          bossFire(state, e, e.burstAngle + s * Math.PI);
+          bossFire(state, e, e.burstAngle + s * Math.PI, endless);
         }
         e.burstAngle += 0.42;
-        e.burstT = 0.05;
+        e.burstT = 0.05 / endless.attackRateMult;
       }
       e.burstN--;
       if (e.burstN <= 0) e.burstType = '';
@@ -77,8 +78,8 @@ function bossUpdate(state: RunState, e: import('../entities/enemy').Enemy, dt: n
     return; // telegraph: stand still, renderer blinks
   }
   if (e.phase === 2) {
-    e.x += e.dashVx * 520 * speedMult * moveMult * dt;
-    e.y += e.dashVy * 520 * speedMult * moveMult * dt;
+    e.x += e.dashVx * 520 * speedMult * endless.speedMult * moveMult * dt;
+    e.y += e.dashVy * 520 * speedMult * endless.speedMult * moveMult * dt;
     // the Brute sets the ground on fire while charging (one patch every ~26u)
     if (def.fireTrail && state.firePatches.length < 160) {
       const last = state.firePatches[state.firePatches.length - 1];
@@ -97,7 +98,7 @@ function bossUpdate(state: RunState, e: import('../entities/enemy').Enemy, dt: n
       } else {
         if (e.burstType === 'dashchain') e.burstType = '';
         e.phase = 0;
-        e.phaseTimer = stage >= 2 ? 2.2 : 3.5;
+        e.phaseTimer = (stage >= 2 ? 2.2 : 3.5) / endless.attackRateMult;
       }
     }
     return;
@@ -111,13 +112,13 @@ function bossUpdate(state: RunState, e: import('../entities/enemy').Enemy, dt: n
   // next attack
   e.shootCd -= dt;
   if (e.shootCd <= 0 && def.shoot && !e.burstType) {
-    e.shootCd = def.shoot.cooldown * (1 - stage * 0.22);
+    e.shootCd = (def.shoot.cooldown * (1 - stage * 0.22)) / endless.attackRateMult;
     const attacks = def.attacks ?? ['radial'];
     const kind = attacks[Math.floor(Math.random() * attacks.length)];
     if (kind === 'radial') {
       const n = 12 + stage * 6;
       const off = stage >= 2 ? Math.random() * Math.PI : 0;
-      for (let i = 0; i < n; i++) bossFire(state, e, off + (i / n) * Math.PI * 2);
+      for (let i = 0; i < n; i++) bossFire(state, e, off + (i / n) * Math.PI * 2, endless);
     } else if (kind === 'fan') {
       e.burstType = 'fan';
       e.burstN = 2 + stage;
@@ -152,6 +153,7 @@ function bossUpdate(state: RunState, e: import('../entities/enemy').Enemy, dt: n
 
 export function updateEnemies(state: RunState, dt: number): void {
   const p = state.player;
+  const endless = getEndlessWaveScaling(state.wave);
   for (let i = 0; i < state.enemies.count; i++) {
     const e = state.enemies.items[i];
     if (!e.active || e.hp <= 0) continue;
@@ -159,7 +161,7 @@ export function updateEnemies(state: RunState, dt: number): void {
     const moveMult = enemyMoveMultiplier(e);
 
     if (def.ai === 'boss') {
-      bossUpdate(state, e, dt, moveMult);
+      bossUpdate(state, e, dt, moveMult, endless);
     } else if (def.ai === 'chargeDash') {
       // sprinter: approach, telegraph briefly, then lunge at the player
       e.phaseTimer -= dt;
@@ -180,11 +182,11 @@ export function updateEnemies(state: RunState, dt: number): void {
           e.phaseTimer = 0.35;
         }
       } else {
-        e.x += e.dashVx * 560 * moveMult * dt;
-        e.y += e.dashVy * 560 * moveMult * dt;
+        e.x += e.dashVx * 560 * endless.speedMult * moveMult * dt;
+        e.y += e.dashVy * 560 * endless.speedMult * moveMult * dt;
         if (e.phaseTimer <= 0) {
           e.phase = 0;
-          e.phaseTimer = 2.2;
+          e.phaseTimer = 2.2 / endless.attackRateMult;
         }
       }
     } else if (def.ai === 'hopper') {
@@ -199,11 +201,11 @@ export function updateEnemies(state: RunState, dt: number): void {
           e.dashVy = dir.y;
         }
       } else {
-        e.x += e.dashVx * 340 * moveMult * dt;
-        e.y += e.dashVy * 340 * moveMult * dt;
+        e.x += e.dashVx * 340 * endless.speedMult * moveMult * dt;
+        e.y += e.dashVy * 340 * endless.speedMult * moveMult * dt;
         if (e.phaseTimer <= 0) {
           e.phase = 0;
-          e.phaseTimer = 0.55;
+          e.phaseTimer = 0.55 / endless.attackRateMult;
         }
       }
     } else if (def.ai === 'summoner') {
@@ -218,7 +220,7 @@ export function updateEnemies(state: RunState, dt: number): void {
       }
       e.summonCd -= dt;
       if (e.summonCd <= 0) {
-        e.summonCd = 6;
+        e.summonCd = 6 / endless.attackRateMult;
         for (let k = 0; k < 3; k++) {
           const m = state.enemies.alloc();
           if (!m) break;
@@ -240,8 +242,8 @@ export function updateEnemies(state: RunState, dt: number): void {
       }
       e.shootCd -= dt;
       if (e.shootCd <= 0 && dist <= def.shoot.range) {
-        e.shootCd = def.shoot.cooldown;
-        state.spawnProjectile(e.x, e.y, dir.x * def.shoot.projSpeed, dir.y * def.shoot.projSpeed, Math.round(def.shoot.damage * state.difficulty.dmgMult), 0, 3, false, false, def.slowShot ? 'frost' : '');
+        e.shootCd = def.shoot.cooldown / endless.attackRateMult;
+        state.spawnProjectile(e.x, e.y, dir.x * def.shoot.projSpeed * endless.speedMult, dir.y * def.shoot.projSpeed * endless.speedMult, Math.round(def.shoot.damage * state.difficulty.dmgMult * endless.damageMult), 0, 3, false, false, def.slowShot ? 'frost' : '');
       }
     } else {
       norm(p.x - e.x, p.y - e.y, dir);
