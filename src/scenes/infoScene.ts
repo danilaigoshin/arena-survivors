@@ -23,6 +23,10 @@ const EXTRA_INFO: [string, string, string][] = [
   ['i_shard', 'ex.shard', 'ex.shardD'],
   ['w_sword', 'ex.tiers', 'ex.tiersD'],
   ['i_planet', 'ex.evo', 'ex.evoD'],
+  ['i_star', 'ex.talents', 'ex.talentsD'],
+  ['i_aspd', 'ex.branches', 'ex.branchesD'],
+  ['i_wave', 'ex.contracts', 'ex.contractsD'],
+  ['i_trophy', 'ex.objectives', 'ex.objectivesD'],
 ];
 
 class InfoScene implements Scene {
@@ -71,7 +75,7 @@ class InfoScene implements Scene {
       ctx.fillText(tt(name), lx + 52, y - 8);
       ctx.fillStyle = '#9a9ab4';
       ctx.font = '12px system-ui, sans-serif';
-      ctx.fillText(tt(desc), lx + 52, y + 10);
+      ctx.fillText(tt(desc), lx + 52, y + 10, colW - 72);
     });
 
     // правая колонка: экономика и оружие
@@ -88,7 +92,7 @@ class InfoScene implements Scene {
       ctx.fillText(tt(name), rx + 52, y - 8);
       ctx.fillStyle = '#9a9ab4';
       ctx.font = '12px system-ui, sans-serif';
-      ctx.fillText(tt(desc), rx + 52, y + 10);
+      ctx.fillText(tt(desc), rx + 52, y + 10, colW - 72);
     });
 
     // подсказки под правой колонкой

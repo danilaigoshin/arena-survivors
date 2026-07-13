@@ -4,6 +4,11 @@ import { ITEMS } from './items';
 import { DICTS } from './locales';
 import { WEAPON_CLASS, type WeaponClassId } from './sets';
 import { WEAPONS } from './weapons';
+import { ABILITY_AUGMENTS } from './abilityAugments';
+import { TALENTS } from './talents';
+import { CAMPAIGN_CONTRACT_WAVES, WAVE_CONTRACTS } from './contracts';
+import { WEAPON_BRANCHES } from './weaponBranches';
+import { WAVE_OBJECTIVES } from './objectives';
 
 export function validateGameContent(): string[] {
   const problems: string[] = [];
@@ -44,10 +49,32 @@ export function validateGameContent(): string[] {
     const start = WEAPONS.find((weapon) => weapon.id === character.weapon);
     if (!start) problems.push(`${character.id}: unknown starting weapon ${character.weapon}`);
     else if (character.weaponClass !== 'all' && WEAPON_CLASS[start.id] !== character.weaponClass) problems.push(`${character.id}: forbidden starting weapon ${start.id}`);
+    const augmentCount = ABILITY_AUGMENTS.filter((augment) => augment.ability === character.ability.id).length;
+    if (augmentCount !== 4) problems.push(`${character.ability.id}: ${augmentCount} augments, expected 4`);
+  }
+
+  for (const branch of WEAPON_BRANCHES) {
+    const sustainedMult = branch.damageMult * branch.attackSpeedMult;
+    if (sustainedMult < 0.97 || sustainedMult > 1.03) problems.push(`${branch.id}: branch DPS multiplier ${sustainedMult.toFixed(3)} outside balance budget`);
+  }
+  for (const contract of WAVE_CONTRACTS) {
+    if (contract.materialMult > 1.25) problems.push(`${contract.id}: material multiplier exceeds 1.25`);
+    if (contract.enemySpeedMult > 1.15) problems.push(`${contract.id}: speed multiplier exceeds 1.15`);
+    if (contract.enemyDamageMult > 1.1) problems.push(`${contract.id}: damage multiplier exceeds 1.10`);
+  }
+  if (new Set(CAMPAIGN_CONTRACT_WAVES).size !== 5) problems.push('campaign must contain five unique contract waves');
+  for (const nextWave of [6, 11, 16]) {
+    if ((CAMPAIGN_CONTRACT_WAVES as readonly number[]).includes(nextWave)) {
+      problems.push(`contract wave ${nextWave} collides with a boss-reward transition`);
+    }
   }
 
   for (const [lang, dict] of Object.entries(DICTS)) {
-    for (const key of ['hero.arsenal', 'hero.anyClass', 'tt.explosion', 'tt.bounces', 'tt.radius', 'tt.summons', 'tt.impact', 'tt.tickDmg']) {
+    for (const key of [
+      'hero.arsenal', 'hero.anyClass', 'tt.explosion', 'tt.bounces', 'tt.radius', 'tt.summons', 'tt.impact', 'tt.tickDmg',
+      'talent.title', 'prog.abilityTitle', 'prog.contractTitle', 'shop.specialization', 'shop.chooseModule', 'contract.none',
+      'objective.hunter', 'objective.collector', 'objective.hold',
+    ]) {
       if (!dict[key]) problems.push(`${lang}: missing ${key}`);
     }
     if (lang === 'ru') continue;
@@ -55,6 +82,25 @@ export function validateGameContent(): string[] {
       if (!dict[`ab:${character.ability.id}`]) problems.push(`${lang}: missing ab:${character.ability.id}`);
       if (!dict[`abd:${character.ability.id}`]) problems.push(`${lang}: missing abd:${character.ability.id}`);
     }
+    for (const talent of TALENTS) {
+      if (!dict[`tal:${talent.id}`]) problems.push(`${lang}: missing tal:${talent.id}`);
+      if (!dict[`tald:${talent.id}`]) problems.push(`${lang}: missing tald:${talent.id}`);
+    }
+    for (const augment of ABILITY_AUGMENTS) {
+      if (!dict[`aug:${augment.id}`]) problems.push(`${lang}: missing aug:${augment.id}`);
+      if (!dict[`augd:${augment.id}`]) problems.push(`${lang}: missing augd:${augment.id}`);
+    }
+    for (const branch of WEAPON_BRANCHES) {
+      if (!dict[`br:${branch.id}`]) problems.push(`${lang}: missing br:${branch.id}`);
+      if (!dict[`brd:${branch.id}`]) problems.push(`${lang}: missing brd:${branch.id}`);
+      if (!dict[`brs:${branch.id}`]) problems.push(`${lang}: missing brs:${branch.id}`);
+    }
+    for (const contract of WAVE_CONTRACTS) {
+      if (!dict[`con:${contract.id}`]) problems.push(`${lang}: missing con:${contract.id}`);
+      if (!dict[`cond:${contract.id}`]) problems.push(`${lang}: missing cond:${contract.id}`);
+      if (!dict[`conr:${contract.id}`]) problems.push(`${lang}: missing conr:${contract.id}`);
+    }
+    for (const objective of Object.values(WAVE_OBJECTIVES)) if (!dict[`obj:${objective.id}`]) problems.push(`${lang}: missing obj:${objective.id}`);
     for (const weapon of WEAPONS) if (!dict[`w:${weapon.id}`]) problems.push(`${lang}: missing w:${weapon.id}`);
   }
   return problems;

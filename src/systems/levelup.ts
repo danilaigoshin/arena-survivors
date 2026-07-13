@@ -29,7 +29,21 @@ export function updatePickups(state: RunState, dt: number): void {
     const collectR = p.radius + 10;
     if (d2 <= collectR * collectR) {
       p.materials += pk.value;
+      state.waveMaterials += pk.value;
       gainXp(state, pk.value);
+      const pulses = p.collectForMagneticPulse(pk.value);
+      for (let pulse = 0; pulse < pulses; pulse++) {
+        state.grid.queryCircle(p.x, p.y, 210, (i) => {
+          const e = state.enemies.items[i];
+          if (!e.active || e.hp <= 0 || e.isBoss) return;
+          const dx = e.x - p.x;
+          const dy = e.y - p.y;
+          const len = Math.max(1, Math.hypot(dx, dy));
+          e.knockX += (dx / len) * 620;
+          e.knockY += (dy / len) * 620;
+        });
+        spawnRing(p.x, p.y, '#8be9fd');
+      }
       spawnBurst(pk.x, pk.y, '#8be9fd', 3);
       playSfx('pickup');
       state.pickups.free(i);
@@ -44,6 +58,7 @@ export function gainXp(state: RunState, amount: number): void {
     p.xp -= p.xpToNext();
     p.level++;
     state.pendingLevelUps++;
+    if (p.level % 4 === 0) state.pendingTalentLevelUps++;
     spawnRing(p.x, p.y, '#8dff9a');
     playSfx('levelup');
   }

@@ -7,10 +7,11 @@ import { panel, bar, roundRect } from './ui';
 import { FINAL_WAVE, MAX_WEAPON_SLOTS } from '../config';
 import { isTouchDevice, getJoystick, abilityButtonCircle, pauseButtonCircle } from '../core/input';
 import { TIER_NAMES, TIER_COLORS, TIER_COOLDOWN } from '../data/weapons';
-import { t } from '../core/i18n';
+import { t, tn } from '../core/i18n';
 import { displayFont } from './font';
 import type { ViewportMetrics } from '../core/viewport';
-import { abilityActiveDuration } from '../data/abilities';
+import { branchAttackSpeedMultiplier } from '../data/weaponBranches';
+import { WAVE_OBJECTIVES } from '../data/objectives';
 
 export function renderHud(ctx: CanvasRenderingContext2D, state: RunState, viewport: ViewportMetrics): void {
   const p = state.player;
@@ -79,6 +80,56 @@ export function renderHud(ctx: CanvasRenderingContext2D, state: RunState, viewpo
   ctx.font = 'bold 15px system-ui, sans-serif';
   ctx.fillText(`${state.kills}`, viewW - mw + 24, 61);
 
+  // ── current optional objective and contract ──
+  const objective = state.objective;
+  if (objective) {
+    const def = WAVE_OBJECTIVES[objective.kind];
+    const oy = 96;
+    panel(ctx, 14, oy, 264, 54, {
+      radius: 11,
+      fill: '#14141edb',
+      border: objective.completed ? '#8dff9a66' : objective.failed ? '#ff547055' : '#ffffff22',
+    });
+    drawIcon(ctx, def.icon, 34, oy + 18, 18);
+    ctx.textAlign = 'left';
+    ctx.font = 'bold 12px system-ui, sans-serif';
+    ctx.fillStyle = objective.completed ? '#8dff9a' : objective.failed ? '#ff7a88' : '#ffffff';
+    ctx.fillText(tn('obj', def.id, def.name), 50, oy + 17, 128);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#ffd23e';
+    ctx.fillText(`+${objective.reward}`, 264, oy + 17);
+    const progress = Math.min(objective.target, objective.progress);
+    const progressText = objective.completed
+      ? t('objective.done')
+      : objective.failed
+        ? t('objective.failed')
+        : objective.kind === 'hold'
+          ? t('objective.hold', progress.toFixed(1), objective.target)
+          : t(`objective.${objective.kind}`, Math.floor(progress), objective.target);
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#9a9ab4';
+    ctx.font = '11px system-ui, sans-serif';
+    ctx.fillText(progressText, 24, oy + 38, 180);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = objective.timeLeft <= 5 && !objective.completed ? '#ff7a88' : '#c8c8dc';
+    ctx.fillText(t('objective.time', Math.ceil(objective.timeLeft)), 264, oy + 38);
+  }
+
+  if (state.activeContract) {
+    const contract = state.activeContract;
+    const cw = 210;
+    const cy = 86;
+    panel(ctx, viewW - cw - 14, cy, cw, 42, { radius: 11, fill: '#1b1812dd', border: '#ffd23e55' });
+    drawIcon(ctx, contract.icon, viewW - cw + 6, cy + 21, 18);
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#ffd23e';
+    ctx.font = 'bold 12px system-ui, sans-serif';
+    ctx.fillText(tn('con', contract.id, contract.name), viewW - cw + 20, cy + 14, cw - 40);
+    ctx.fillStyle = '#9fdca0';
+    ctx.font = '10px system-ui, sans-serif';
+    ctx.fillText(tn('conr', contract.id, contract.reward), viewW - cw + 20, cy + 29, cw - 40);
+  }
+
   // ── bottom-left: weapon slots with cooldown overlay (shifted right on touch to clear the ability button) ──
   const touch = isTouchDevice();
   const slotSize = 46;
@@ -102,6 +153,18 @@ export function renderHud(ctx: CanvasRenderingContext2D, state: RunState, viewpo
         ctx.restore();
       }
       drawIcon(ctx, weaponIcon(w.def.id), x + slotSize / 2, sy + slotSize / 2, 26);
+      if (w.branch || w.branchPending) {
+        ctx.fillStyle = w.branch === 'force' ? '#ffd23e' : w.branch === 'tempo' ? '#8be9fd' : '#b18cff';
+        ctx.beginPath();
+        ctx.arc(x + 7, sy + 7, w.branchPending ? 5 : 4, 0, Math.PI * 2);
+        ctx.fill();
+        if (w.branchPending) {
+          ctx.fillStyle = '#ffffff';
+          ctx.font = 'bold 8px system-ui, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText('!', x + 7, sy + 7.5);
+        }
+      }
       // tier badge
       if (w.tier > 1 || w.def.evolved) {
         ctx.fillStyle = w.def.evolved ? '#ffd23e' : TIER_COLORS[w.tier - 1];
@@ -114,7 +177,7 @@ export function renderHud(ctx: CanvasRenderingContext2D, state: RunState, viewpo
         ctx.fillText(w.def.evolved ? '★' : TIER_NAMES[w.tier - 1], x + slotSize - 11, sy + slotSize - 9);
       }
       if (w.def.cooldown > 0) {
-        const maxCd = (w.def.cooldown * TIER_COOLDOWN[w.tier - 1]) / aspd;
+        const maxCd = (w.def.cooldown * TIER_COOLDOWN[w.tier - 1]) / (aspd * branchAttackSpeedMultiplier(w.branch));
         const frac = Math.max(0, Math.min(1, w.cooldownTimer / maxCd));
         if (frac > 0.02) {
           ctx.save();
@@ -131,7 +194,7 @@ export function renderHud(ctx: CanvasRenderingContext2D, state: RunState, viewpo
   // ── ability: desktop slot (Space) or big touch button ──
   const ab = p.character.ability;
   const abilityActive = p.abilityActiveT > 0;
-  const activeFrac = abilityActive ? p.abilityActiveT / abilityActiveDuration(ab.id) : 0;
+  const activeFrac = abilityActive ? p.abilityActiveT / p.abilityDuration() : 0;
   if (touch) {
     const c = abilityButtonCircle(viewport);
     const cx = (c.x - offsetX) / hudScale;
@@ -166,7 +229,8 @@ export function renderHud(ctx: CanvasRenderingContext2D, state: RunState, viewpo
       ctx.fillStyle = '#000000a0';
       ctx.beginPath();
       ctx.moveTo(cx, cy);
-      ctx.arc(cx, cy, cr - 2 / hudScale, -Math.PI / 2, -Math.PI / 2 + (p.abilityCd / ab.cooldown) * Math.PI * 2);
+      const cooldownFrac = Math.min(1, p.abilityCd / p.abilityCooldown());
+      ctx.arc(cx, cy, cr - 2 / hudScale, -Math.PI / 2, -Math.PI / 2 + cooldownFrac * Math.PI * 2);
       ctx.closePath();
       ctx.fill();
     }
@@ -216,7 +280,7 @@ export function renderHud(ctx: CanvasRenderingContext2D, state: RunState, viewpo
     });
     drawIcon(ctx, ab.icon, ax + 26, sy + 20, 28);
     if (p.abilityCd > 0 && !abilityActive) {
-      const frac = p.abilityCd / ab.cooldown;
+      const frac = Math.min(1, p.abilityCd / p.abilityCooldown());
       ctx.save();
       roundRect(ctx, ax, sy - 6, 52, 52, 12);
       ctx.clip();
@@ -229,7 +293,7 @@ export function renderHud(ctx: CanvasRenderingContext2D, state: RunState, viewpo
       ctx.fillRect(ax + 4, sy + 41, 44 * activeFrac, 3);
     } else if (p.abilityRecoveryT > 0) {
       ctx.fillStyle = '#ff7040';
-      ctx.fillRect(ax + 4, sy + 41, 44 * (p.abilityRecoveryT / 2), 3);
+      ctx.fillRect(ax + 4, sy + 41, 44 * (p.abilityRecoveryT / p.overheatRecoveryDuration()), 3);
     }
     ctx.fillStyle = abilityActive ? '#ffd23e' : p.abilityRecoveryT > 0 ? '#ff7040' : p.abilityCd <= 0 ? '#8be9fd' : '#667';
     ctx.font = 'bold 10px system-ui, sans-serif';

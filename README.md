@@ -11,8 +11,10 @@ A pixel-art arena survival roguelite in the browser. Survive 20 waves, build you
 - **20-wave campaign** across 10 unique maps: meadows, graveyard, glacier, cinders, demon's lair… — each with its own palette, obstacles and atmosphere
 - **Weapons fire on their own** — your job is positioning and dodging
 - **Shop between waves**: weapon tiers I–IV by merging duplicates, selling, item rarities, a wandering trader with discounts
+- **Weapon specializations** chosen inside the shop at tier III: trade damage for speed or speed for damage without a raw-DPS upgrade
 - **Evolutions**: a tier-IV weapon + a catalyst item = a unique superweapon (Annihilator, Storm Blade…)
-- **4 heroes** with different starts and tradeoffs, 2 unlockable with shards
+- **4 heroes** with class-specific active abilities and permanent ability upgrades after bosses
+- **Mechanical talents** every fourth level, plus optional wave objectives and risk/reward contracts
 - **Meta progression**: shards from runs, permanent perks, weapon unlocks, records
 - **Elite enemies, multi-phase bosses at waves 5/10/15/20, endless mode** after victory
 - **3 difficulty levels** and **8 interface languages**

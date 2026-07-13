@@ -11,6 +11,7 @@ import { playSfx } from '../render/audio';
 import { PLAYER_IFRAMES } from '../config';
 import { hitsObstacle } from '../data/maps';
 import type { AreaEffect } from '../entities/areaEffect';
+import { branchAttackSpeedMultiplier, branchDamageMultiplier } from '../data/weaponBranches';
 
 const dir = { x: 0, y: 0 };
 const chainHitIndices = new Int32Array(8);
@@ -43,6 +44,7 @@ export function damageEnemy(
   flags = 0,
 ): void {
   if (!e.active || e.hp <= 0) return;
+  rawDmg *= state.player.talentDamageMultiplier(e.hp / Math.max(1, e.maxHp), e.isBoss);
   let dmgMul = crit ? 2 : 1;
   // shieldbearer blocks most damage arriving from the front (he faces the player)
   if (e.def.frontBlock && (flags & DAMAGE_IGNORE_BLOCK) === 0) {
@@ -72,7 +74,7 @@ export function damageEnemy(
     state.kills++;
     if (e.isBoss) state.bossDead = true;
     // gem economy: expected drop is materialDrop × 0.5, fractional part becomes a chance (0 is possible)
-    const expected = e.def.materialDrop * (e.elite ? 4 : 1) * 0.5 * range(0.85, 1.15);
+    const expected = e.def.materialDrop * (e.elite ? 4 : 1) * 0.5 * (state.activeContract?.materialMult ?? 1) * range(0.85, 1.15);
     const amount = Math.floor(expected) + (chance(expected - Math.floor(expected)) ? 1 : 0);
     if (amount > 0) state.dropMaterials(e.x, e.y, amount);
     // splitters burst into smaller slimes
@@ -159,8 +161,16 @@ export function updateEnemyStatuses(state: RunState, dt: number): void {
 export function damagePlayer(state: RunState, rawDmg: number): void {
   const p = state.player;
   if (p.iframes > 0 || p.hp <= 0) return;
-  const dmg = armorReduction(rawDmg, p.stats.armor);
+  if (p.tryBlockWithBarrier()) {
+    p.iframes = 0.2;
+    spawnRing(p.x, p.y, '#8be9fd');
+    spawnBurst(p.x, p.y, '#8be9fd', 8);
+    playSfx('magic');
+    return;
+  }
+  const dmg = armorReduction(rawDmg * (state.activeContract?.enemyDamageMult ?? 1), p.stats.armor);
   p.hp -= dmg;
+  p.momentumT = 0;
   p.iframes = PLAYER_IFRAMES;
   spawnDamageNumber(p.x, p.y - p.radius - 6, dmg);
   flashScreen();
@@ -429,13 +439,15 @@ export function updateWeapons(state: RunState, dt: number): void {
   const p = state.player;
   const baseDmgMult = 1 + p.stats.damagePct / 100;
   const baseSpeedMult = 1 + p.stats.attackSpeedPct / 100;
+  const talentSpeedMult = p.talentAttackSpeedMultiplier();
 
   state.hitStopCd = Math.max(0, state.hitStopCd - dt);
   for (const w of p.weapons) {
     const def = w.def;
-    const dmgMult = baseDmgMult * p.abilityDamageMultiplier(def.id);
-    const abilitySpeedMult = p.abilityAttackSpeedMultiplier(def.id);
-    const speedMult = baseSpeedMult * abilitySpeedMult;
+    const dmgMult = baseDmgMult * p.abilityDamageMultiplier(def.id) * branchDamageMultiplier(w.branch);
+    const permanentSpeedMult = baseSpeedMult * branchAttackSpeedMultiplier(w.branch);
+    const temporarySpeedMult = p.abilityAttackSpeedMultiplier(def.id) * talentSpeedMult;
+    const speedMult = permanentSpeedMult * temporarySpeedMult;
     const tierDmg = TIER_DAMAGE[w.tier - 1];
     const tierCd = TIER_COOLDOWN[w.tier - 1];
     w.recoil = Math.max(0, w.recoil - dt * 9);
@@ -443,7 +455,7 @@ export function updateWeapons(state: RunState, dt: number): void {
 
     if (def.behavior === 'summon' && def.summon) {
       w.orbitAngle += dt * 1.8;
-      updateSummons(state, w, dt, def.damage * dmgMult * tierDmg, baseSpeedMult, abilitySpeedMult);
+      updateSummons(state, w, dt, def.damage * dmgMult * tierDmg, permanentSpeedMult, temporarySpeedMult);
       continue;
     }
 
@@ -451,8 +463,8 @@ export function updateWeapons(state: RunState, dt: number): void {
       w.orbitAngle += def.orbit.angularSpeed * speedMult * dt;
       // tick down per-enemy hit cooldowns
       for (const [uid, t] of w.hitCooldowns) {
-        if (t - dt <= 0) w.hitCooldowns.delete(uid);
-        else w.hitCooldowns.set(uid, t - dt);
+        if (t - dt * temporarySpeedMult <= 0) w.hitCooldowns.delete(uid);
+        else w.hitCooldowns.set(uid, t - dt * temporarySpeedMult);
       }
       const orbR = 14;
       const orbs = weaponOrbCount(w);
@@ -465,7 +477,7 @@ export function updateWeapons(state: RunState, dt: number): void {
           if (!e.active || e.hp <= 0 || w.hitCooldowns.has(e.uid)) return;
           const rr = e.radius + orbR;
           if (dist2(e.x, e.y, ox, oy) > rr * rr) return;
-          w.hitCooldowns.set(e.uid, def.orbit!.hitCooldown);
+          w.hitCooldowns.set(e.uid, def.orbit!.hitCooldown / branchAttackSpeedMultiplier(w.branch));
           norm(e.x - p.x, e.y - p.y, dir);
           damageEnemy(state, e, def.damage * dmgMult * tierDmg, critRoll(state), dir.x * 160, dir.y * 160);
         });
@@ -475,7 +487,7 @@ export function updateWeapons(state: RunState, dt: number): void {
 
     // Temporary ability buffs accelerate the remaining cooldown immediately;
     // permanent attack speed stays baked into the cooldown's base duration.
-    w.cooldownTimer -= dt * abilitySpeedMult;
+    w.cooldownTimer -= dt * temporarySpeedMult;
     w.swipeTimer = Math.max(0, w.swipeTimer - dt);
     if (w.cooldownTimer > 0) continue;
 
@@ -484,7 +496,7 @@ export function updateWeapons(state: RunState, dt: number): void {
     const target = state.enemies.items[targetIdx];
     if (!target.active || target.hp <= 0) continue;
 
-    w.cooldownTimer = (def.cooldown * tierCd) / baseSpeedMult;
+    w.cooldownTimer = (def.cooldown * tierCd) / permanentSpeedMult;
     w.recoil = 1;
     const angle = Math.atan2(target.y - p.y, target.x - p.x);
     p.aimAngle = angle;

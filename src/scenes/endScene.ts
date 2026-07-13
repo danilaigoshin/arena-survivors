@@ -10,6 +10,7 @@ import { t as tt } from '../core/i18n';
 import { displayFont } from '../render/font';
 import { menuScene } from './menu';
 import { runScene } from './run';
+import { continueToNextWave } from './progressionScene';
 
 class EndScene implements Scene {
   won = false;
@@ -39,10 +40,8 @@ class EndScene implements Scene {
     const a = this.action;
     this.action = null;
     if (a === 'endless') {
-      // keep the whole run state, just move on to wave 11
-      game.state.wave++;
-      runScene.enterWave(game);
-      game.setScene(runScene);
+      // Keep the run state and pass through the next-wave progression first.
+      continueToNextWave(game);
     } else if (a === 'retry' && this.character) {
       game.newRun(this.character);
       runScene.enterWave(game);

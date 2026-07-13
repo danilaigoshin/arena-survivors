@@ -13,6 +13,7 @@ import { addShake } from '../render/fx';
 import { updateProjectiles, separateEnemies, enemyContactDamage } from '../systems/collision';
 import { updatePickups, updateRegen, rollUpgradeChoices } from '../systems/levelup';
 import type { UpgradeDef } from '../data/upgrades';
+import { rollTalentChoices, type TalentDef } from '../data/talents';
 import { generateMap, pushOutOfObstacles, hitsObstacle } from '../data/maps';
 import { rollChestLoot, type ShopOffer } from '../systems/shop';
 import { WeaponInstance } from '../entities/weapon';
@@ -33,6 +34,7 @@ import { STAT_LABELS, formatStatValue, type Stats } from '../entities/stats';
 import { shopScene } from './shopScene';
 import { eventScene } from './eventScene';
 import { endScene } from './endScene';
+import { createWaveObjective, failWaveObjective, updateWaveObjective } from '../systems/objectives';
 
 const axis = { x: 0, y: 0 };
 const dir = { x: 0, y: 0 };
@@ -53,10 +55,12 @@ const WAVE_END_DELAY = 1.2;
 const LEVEL_LAYOUT_W = 720;
 const LEVEL_LAYOUT_H = 340;
 const LEVEL_CARD_Y = 96;
+type LevelChoice = UpgradeDef | TalentDef;
 
 class RunScene implements Scene {
   wantsJoystick = true;
-  levelUpChoices: UpgradeDef[] | null = null;
+  levelUpChoices: LevelChoice[] | null = null;
+  private levelUpTalentMode = false;
   private levelUpAction: number | null = null;
   get blocksJoystick(): boolean {
     return !!(this.levelUpChoices || this.paused || this.chestReward);
@@ -87,7 +91,7 @@ class RunScene implements Scene {
     this.hintTimer = s.wave === 1 && loadMeta().stats.runs === 0 ? 8 : 0;
     // every wave starts at full health (Brotato-style)
     s.player.hp = s.player.stats.maxHp;
-    s.player.clearAbilityEffects();
+    s.player.resetWaveMechanics();
     s.projectiles.clear();
     s.areaEffects.clear();
     // fresh map every wave
@@ -119,6 +123,8 @@ class RunScene implements Scene {
     // the center stays obstacle-free by generation, put the player there
     s.player.x = ARENA_W / 2;
     s.player.y = ARENA_H / 2;
+    s.waveMaterials = 0;
+    s.objective = createWaveObjective(s);
     game.camera.follow(s.player.x, s.player.y);
   }
 
@@ -175,14 +181,24 @@ class RunScene implements Scene {
 
     // level-up overlay pauses the sim
     if (s.pendingLevelUps > 0 && !this.levelUpChoices) {
-      this.levelUpChoices = rollUpgradeChoices(p.stats.luck);
+      const wantsTalent = s.pendingTalentLevelUps > 0;
+      const talentChoices = wantsTalent ? rollTalentChoices(p.talents) : [];
+      this.levelUpTalentMode = talentChoices.length > 0;
+      if (wantsTalent && !this.levelUpTalentMode) s.pendingTalentLevelUps--;
+      this.levelUpChoices = this.levelUpTalentMode ? talentChoices : rollUpgradeChoices(p.stats.luck);
       this.levelUpAction = null;
     }
     if (this.levelUpChoices) {
       const choice = this.levelUpAction;
       this.levelUpAction = null;
       if (choice !== null && choice >= 0 && choice < this.levelUpChoices.length) {
-        p.addUpgrade(this.levelUpChoices[choice].modifiers);
+        const selected = this.levelUpChoices[choice];
+        if (isTalentChoice(selected)) {
+          p.addTalent(selected.id);
+          s.pendingTalentLevelUps--;
+        } else {
+          p.addUpgrade(selected.modifiers);
+        }
         s.pendingLevelUps--;
         this.levelUpChoices = null;
         playSfx('click');
@@ -206,6 +222,7 @@ class RunScene implements Scene {
     moveAxis(axis);
     norm(axis.x, axis.y, dir);
     p.moving = axis.x !== 0 || axis.y !== 0;
+    p.updateTalentTimers(dt);
 
     // active ability (Space)
     p.abilityCd = Math.max(0, p.abilityCd - dt);
@@ -214,7 +231,7 @@ class RunScene implements Scene {
     }
     p.updateAbilityTimers(dt);
     p.slowT = Math.max(0, p.slowT - dt);
-    const moveMult = (p.slowT > 0 ? 0.6 : 1) * p.abilityMoveSpeedMultiplier();
+    const moveMult = (p.slowT > 0 ? 0.6 : 1) * p.abilityMoveSpeedMultiplier() * p.talentMoveSpeedMultiplier();
     p.x = clamp(p.x + dir.x * p.stats.moveSpeed * moveMult * dt, p.radius, ARENA_W - p.radius);
     p.y = clamp(p.y + dir.y * p.stats.moveSpeed * moveMult * dt, p.radius, ARENA_H - p.radius);
     pushOutOfObstacles(s.obstacles, p);
@@ -244,6 +261,7 @@ class RunScene implements Scene {
 
     updatePickups(s, dt);
     updateRegen(s, dt);
+    if (!inWaveEnd) updateWaveObjective(s, dt);
     updateFx(dt);
 
     // bomber explosions: telegraph counts down, then boom
@@ -344,8 +362,15 @@ class RunScene implements Scene {
   private useAbility(game: Game): void {
     const p = game.state.player;
     const ab = p.character.ability;
-    p.abilityCd = ab.cooldown;
+    p.abilityCd = p.abilityCooldown();
     p.activateAbility();
+    if (p.hasTalent('synchronization')) {
+      for (const weapon of p.weapons) {
+        weapon.cooldownTimer *= 0.7;
+        for (const [uid, cooldown] of weapon.hitCooldowns) weapon.hitCooldowns.set(uid, cooldown * 0.7);
+        for (let i = 0; i < weapon.summonCount; i++) weapon.summonHitCd[i] *= 0.7;
+      }
+    }
     if (ab.id === 'adaptation') {
       spawnBurst(p.x, p.y, '#8dff9a', 12);
       spawnRing(p.x, p.y, '#8dff9a');
@@ -367,27 +392,34 @@ class RunScene implements Scene {
   private updateAbilityEffects(game: Game, dt: number): void {
     const s = game.state;
     const p = s.player;
-    if (p.character.ability.id === 'whirlwind' && p.abilityActiveT > 0 && p.abilityPulseCount < ABILITY_BALANCE.whirlwind.hits) {
+    if (p.character.ability.id === 'whirlwind' && p.abilityActiveT > 0 && p.abilityPulseCount < p.whirlwindHits()) {
       p.abilityPulseT -= dt;
-      while (p.abilityPulseT <= 0 && p.abilityPulseCount < ABILITY_BALANCE.whirlwind.hits) {
+      while (p.abilityPulseT <= 0 && p.abilityPulseCount < p.whirlwindHits()) {
         let strongestBladeDamage = 0;
         for (const w of p.weapons) {
           if (WEAPON_CLASS[w.def.id] !== 'blade') continue;
           strongestBladeDamage = Math.max(strongestBladeDamage, w.def.damage * TIER_DAMAGE[w.tier - 1]);
         }
-        const rawDamage = Math.max(1, strongestBladeDamage * ABILITY_BALANCE.whirlwind.damageScale * (1 + p.stats.damagePct / 100));
-        s.grid.queryCircle(p.x, p.y, ABILITY_BALANCE.whirlwind.radius + 40, (i) => {
+        const rawDamage = Math.max(1, strongestBladeDamage * p.whirlwindDamageScale() * (1 + p.stats.damagePct / 100));
+        const radius = p.whirlwindRadius();
+        s.grid.queryCircle(p.x, p.y, radius + 40, (i) => {
           const e = s.enemies.items[i];
           if (!e.active || e.hp <= 0) return;
           const dx = e.x - p.x;
           const dy = e.y - p.y;
-          const rr = ABILITY_BALANCE.whirlwind.radius + e.radius;
+          const rr = radius + e.radius;
           if (dx * dx + dy * dy > rr * rr) return;
           const len = Math.max(1, Math.hypot(dx, dy));
           damageEnemy(s, e, rawDamage, false, (dx / len) * 220, (dy / len) * 220, '#ffd23e');
+          // Keep the original hit direction for shield-facing checks, then turn
+          // the resulting +220 impulse into a net −180 pull.
+          if (p.hasAbilityAugment('whirlwind_pull') && e.active) {
+            e.knockX -= (dx / len) * 400;
+            e.knockY -= (dy / len) * 400;
+          }
         });
         p.abilityPulseCount++;
-        p.abilityPulseT += ABILITY_BALANCE.whirlwind.hitInterval;
+        p.abilityPulseT += p.whirlwindHitInterval();
         spawnRing(p.x, p.y, '#ffd23e');
         addShake(3);
         playSfx('shoot');
@@ -395,12 +427,13 @@ class RunScene implements Scene {
     }
 
     if (p.character.ability.id === 'arcane_circle' && p.abilityActiveT > 0) {
-      s.grid.queryCircle(p.abilityX, p.abilityY, ABILITY_BALANCE.arcaneCircle.radius + 40, (i) => {
+      const radius = p.arcaneCircleRadius();
+      s.grid.queryCircle(p.abilityX, p.abilityY, radius + 40, (i) => {
         const e = s.enemies.items[i];
         if (!e.active || e.hp <= 0) return;
         const dx = e.x - p.abilityX;
         const dy = e.y - p.abilityY;
-        const rr = ABILITY_BALANCE.arcaneCircle.radius + e.radius;
+        const rr = radius + e.radius;
         if (dx * dx + dy * dy > rr * rr) return;
         e.slowPct = Math.max(e.slowPct, ABILITY_BALANCE.arcaneCircle.slowPct);
         e.slowT = Math.max(e.slowT, 0.1);
@@ -428,7 +461,7 @@ class RunScene implements Scene {
       if (mergeable) {
         const owned = p.weapons.filter((w) => w.def.id === r.weapon.id && w.tier < MAX_TIER);
         owned.sort((a, b) => a.tier - b.tier);
-        owned[0].tier = (owned[0].tier + 1) as WeaponInstance['tier'];
+        p.upgradeWeapon(owned[0]);
       } else if (p.canAddWeapon()) {
         p.weapons.push(new WeaponInstance(r.weapon, p.weapons.length));
       } else {
@@ -445,12 +478,13 @@ class RunScene implements Scene {
   private beginWaveEnd(s: Game['state']): void {
     this.waveEndTimer = WAVE_END_DELAY;
     s.vacuum = true;
+    failWaveObjective(s);
     s.player.clearAbilityEffects();
     // remaining enemies die and drop their materials
     for (let i = 0; i < s.enemies.count; i++) {
       const e = s.enemies.items[i];
       if (e.active && !e.isBoss) {
-        s.dropMaterials(e.x, e.y, Math.max(1, Math.round(e.def.materialDrop * 0.5)));
+        s.dropMaterials(e.x, e.y, Math.max(1, Math.round(e.def.materialDrop * 0.5 * (s.activeContract?.materialMult ?? 1))));
         e.active = false;
       }
     }
@@ -631,13 +665,13 @@ class RunScene implements Scene {
         ctx.font = displayFont(20);
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(t('lvl.title'), ow / 2, 28);
+        ctx.fillText(this.levelUpTalentMode ? t('talent.title') : t('lvl.title'), ow / 2, 28);
         ctx.restore();
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillStyle = '#aab';
         ctx.font = '15px system-ui, sans-serif';
-        ctx.fillText(t('lvl.sub'), ow / 2, 64);
+        ctx.fillText(this.levelUpTalentMode ? t('talent.sub') : t('lvl.sub'), ow / 2, 64);
         for (let i = 0; i < this.levelUpChoices!.length; i++) {
           const u = this.levelUpChoices![i];
           const [x, y, cw, ch] = this.virtualCardRect(i, this.levelUpChoices!.length);
@@ -647,30 +681,68 @@ class RunScene implements Scene {
             this.levelUpAction = i;
           }
           const rc = RARITY_COLORS[u.rarity - 1];
+          const talent = isTalentChoice(u);
           panel(ctx, x, y, cw, ch, {
             radius: 14,
             fill: hover ? ['#2c3c30', '#1c241e'] : ['#222234', '#181824'],
             border: hover ? '#8dff9a' : rc,
             glow: hover ? '#8dff9a55' : u.rarity > 1 ? `${rc}55` : undefined,
           });
-          drawIcon(ctx, u.emoji, x + cw / 2, y + 44, 40);
+          drawIcon(ctx, talent ? u.icon : u.emoji, x + cw / 2, y + 44, 40);
           ctx.fillStyle = '#ffffff';
           ctx.font = 'bold 19px system-ui, sans-serif';
-          ctx.fillText(tn('u', u.id, u.name), x + cw / 2, y + 88, cw - 16);
+          ctx.fillText(tn(talent ? 'tal' : 'u', u.id, u.name), x + cw / 2, y + 88, cw - 16);
           ctx.fillStyle = rc;
           ctx.font = 'bold 11px system-ui, sans-serif';
-          ctx.fillText(rarityName(u.rarity).toUpperCase(), x + cw / 2, y + 108);
+          ctx.fillText(talent ? t('talent.tag') : rarityName(u.rarity).toUpperCase(), x + cw / 2, y + 108);
           ctx.font = '13px system-ui, sans-serif';
-          Object.entries(u.modifiers).forEach(([k, v], li) => {
-            const val = v as number;
-            ctx.fillStyle = val > 0 ? '#9fdca0' : '#e08a8a';
-            ctx.fillText(`${STAT_LABELS[k as keyof Stats]} ${formatStatValue(k as keyof Stats, val)}`, x + cw / 2, y + 128 + li * 17, cw - 16);
-          });
+          if (talent) {
+            ctx.fillStyle = '#c5c5d6';
+            ctx.font = '12px system-ui, sans-serif';
+            drawWrappedCentered(ctx, tn('tald', u.id, u.desc), x + cw / 2, y + 130, cw - 24, 16, 4);
+          } else {
+            Object.entries(u.modifiers).forEach(([k, v], li) => {
+              const val = v as number;
+              ctx.fillStyle = val > 0 ? '#9fdca0' : '#e08a8a';
+              ctx.fillText(`${STAT_LABELS[k as keyof Stats]} ${formatStatValue(k as keyof Stats, val)}`, x + cw / 2, y + 128 + li * 17, cw - 16);
+            });
+          }
         }
       });
       ctx.restore();
     }
   }
+}
+
+function isTalentChoice(choice: LevelChoice): choice is TalentDef {
+  return 'kind' in choice && choice.kind === 'talent';
+}
+
+function drawWrappedCentered(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  maxWidth: number,
+  lineHeight: number,
+  maxLines: number,
+): void {
+  const words = text.includes(' ') ? text.split(' ') : Array.from(text);
+  const separator = text.includes(' ') ? ' ' : '';
+  let line = '';
+  let lineIndex = 0;
+  for (const word of words) {
+    const probe = line ? `${line}${separator}${word}` : word;
+    if (line && ctx.measureText(probe).width > maxWidth) {
+      ctx.fillText(line, x, y + lineIndex * lineHeight);
+      line = word;
+      lineIndex++;
+      if (lineIndex >= maxLines) return;
+    } else {
+      line = probe;
+    }
+  }
+  if (line && lineIndex < maxLines) ctx.fillText(line, x, y + lineIndex * lineHeight);
 }
 
 export const runScene = new RunScene();

@@ -7,7 +7,6 @@ import { weaponIcon } from './icons';
 import { shakeOffsetX, shakeOffsetY, kickOffsetX, kickOffsetY } from './fx';
 import { drawFx } from './fx';
 import { drawLiveDecor } from './floor';
-import { ABILITY_BALANCE } from '../data/abilities';
 
 const CHAIN_FX_DUR = 0.14;
 
@@ -133,7 +132,7 @@ function drawCharacterAbility(ctx: CanvasRenderingContext2D, state: RunState, ti
   const p = state.player;
   const id = p.character.ability.id;
   if (id === 'arcane_circle' && p.abilityActiveT > 0) {
-    const radius = ABILITY_BALANCE.arcaneCircle.radius;
+    const radius = p.arcaneCircleRadius();
     const pulse = 1 + Math.sin(time * 5) * 0.025;
     const fade = Math.min(1, p.abilityActiveT / 0.4);
     ctx.save();
@@ -164,13 +163,14 @@ function drawCharacterAbility(ctx: CanvasRenderingContext2D, state: RunState, ti
     ctx.lineWidth = 4;
     for (let i = 0; i < 3; i++) {
       ctx.strokeStyle = colors[i];
-      ctx.globalAlpha = i < Math.round(p.abilityPower / ABILITY_BALANCE.adaptation.bonusPerClass) ? 0.9 : 0.12;
+      ctx.globalAlpha = i < Math.round(p.abilityPower / p.adaptationBonusPerClass()) ? 0.9 : 0.12;
       ctx.beginPath();
       ctx.arc(p.x, p.y, 30 + i * 5, time * 1.8 + i * 2.1, time * 1.8 + i * 2.1 + 1.35);
       ctx.stroke();
     }
     ctx.restore();
   } else if (id === 'whirlwind' && p.abilityActiveT > 0) {
+    const radius = p.whirlwindRadius();
     ctx.save();
     ctx.strokeStyle = '#ffd23e';
     ctx.lineCap = 'round';
@@ -181,7 +181,7 @@ function drawCharacterAbility(ctx: CanvasRenderingContext2D, state: RunState, ti
       ctx.lineWidth = 6 - i;
       const a = time * 12 + i * 2.05;
       ctx.beginPath();
-      ctx.arc(p.x, p.y, 65 + i * 34, a, a + 1.3);
+      ctx.arc(p.x, p.y, radius * (0.44 + i * 0.22), a, a + 1.3);
       ctx.stroke();
     }
     ctx.restore();
@@ -201,6 +201,34 @@ function drawCharacterAbility(ctx: CanvasRenderingContext2D, state: RunState, ti
     }
     ctx.restore();
   }
+}
+
+function drawWaveObjective(ctx: CanvasRenderingContext2D, state: RunState, time: number): void {
+  const objective = state.objective;
+  if (!objective || objective.kind !== 'hold' || objective.completed || objective.failed) return;
+  const pulse = 1 + Math.sin(time * 4) * 0.025;
+  const progress = Math.max(0, Math.min(1, objective.progress / objective.target));
+  ctx.save();
+  ctx.globalAlpha = 0.13;
+  ctx.fillStyle = '#8dff9a';
+  ctx.beginPath();
+  ctx.arc(objective.x, objective.y, objective.radius * pulse, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 0.7;
+  ctx.strokeStyle = '#8dff9a';
+  ctx.lineWidth = 3;
+  ctx.setLineDash([12, 8]);
+  ctx.beginPath();
+  ctx.arc(objective.x, objective.y, objective.radius * pulse, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.arc(objective.x, objective.y, objective.radius - 8, -Math.PI / 2, -Math.PI / 2 + progress * Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
 }
 
 function drawSummons(ctx: CanvasRenderingContext2D, state: RunState, time: number): void {
@@ -301,6 +329,8 @@ export function renderWorld(ctx: CanvasRenderingContext2D, state: RunState, cam:
     drawShadow(ctx, ob.x, ob.y + ob.radius * 0.8, ob.radius * 2);
     drawSprite(ctx, ob.sprite, ob.x, ob.y, ob.radius * 2.4);
   }
+
+  drawWaveObjective(ctx, state, time);
 
   // pickups (bobbing gems)
   for (let i = 0; i < state.pickups.count; i++) {

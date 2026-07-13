@@ -158,7 +158,9 @@ export function updateEnemies(state: RunState, dt: number): void {
     const e = state.enemies.items[i];
     if (!e.active || e.hp <= 0) continue;
     const def = e.def;
-    const moveMult = enemyMoveMultiplier(e);
+    // Apply contract speed at movement time so spawned/split enemies and dash
+    // phases receive the same modifier as enemies created by the main spawner.
+    const moveMult = enemyMoveMultiplier(e) * (state.activeContract?.enemySpeedMult ?? 1);
 
     if (def.ai === 'boss') {
       bossUpdate(state, e, dt, moveMult, endless);

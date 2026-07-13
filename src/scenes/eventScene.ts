@@ -9,7 +9,7 @@ import { STAT_LABELS, formatStatValue, type Stats } from '../entities/stats';
 import { pick } from '../core/rng';
 import { playSfx } from '../render/audio';
 import { t as tt, tn } from '../core/i18n';
-import { runScene } from './run';
+import { continueToNextWave } from './progressionScene';
 
 export type EventKind = 'chest' | 'altar';
 
@@ -44,9 +44,7 @@ class EventScene implements Scene {
     if (!a) return;
     const p = game.state.player;
     if (a === 'go') {
-      game.state.wave++;
-      runScene.enterWave(game);
-      game.setScene(runScene);
+      continueToNextWave(game);
       return;
     }
     if (this.resolved) return;
@@ -64,7 +62,7 @@ class EventScene implements Scene {
         const owned = p.weapons.filter((w) => w.def.id === r.weapon.id && w.tier < MAX_TIER);
         if (owned.length > 0) {
           owned.sort((x, y) => x.tier - y.tier);
-          owned[0].tier = (owned[0].tier + 1) as WeaponInstance['tier'];
+          p.upgradeWeapon(owned[0]);
           this.resultText = tt('ev.resUpgraded', tn('w', r.weapon.id, r.weapon.name), TIER_NAMES[owned[0].tier - 1]);
         } else if (p.canAddWeapon()) {
           p.weapons.push(new WeaponInstance(r.weapon, p.weapons.length));

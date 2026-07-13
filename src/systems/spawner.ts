@@ -65,7 +65,7 @@ export function updateSpawner(state: RunState, cam: Camera, dt: number): void {
   const endless = getEndlessWaveScaling(state.wave);
   const elapsed = waveDef.duration - state.waveTimer;
   const t = clamp(elapsed / waveDef.duration, 0, 1);
-  const interval = lerp(waveDef.spawnInterval[0], waveDef.spawnInterval[1], t);
+  const interval = lerp(waveDef.spawnInterval[0], waveDef.spawnInterval[1], t) / (state.activeContract?.spawnRateMult ?? 1);
 
   // boss spawns 2s into its wave
   if (waveDef.boss && state.bossUid === 0 && !state.bossDead && elapsed >= 2) {
@@ -75,14 +75,15 @@ export function updateSpawner(state: RunState, cam: Camera, dt: number): void {
   state.spawnTimer -= dt;
   while (state.spawnTimer <= 0) {
     state.spawnTimer += interval;
-    if (state.enemies.count >= waveDef.maxAlive) break;
+    const maxAlive = Math.min(390, Math.round(waveDef.maxAlive * (state.activeContract?.maxAliveMult ?? 1)));
+    if (state.enemies.count >= maxAlive) break;
     const e = state.enemies.alloc();
     if (!e) break;
     spawnPointClear(state, cam, pt, 26);
     const entry = pickWeighted(waveDef.table);
     // Endless waves add a little more elite pressure on every step.
     const baseEliteChance = Math.min(0.18, 0.03 + state.wave * 0.01) + endless.eliteChanceBonus;
-    const eliteChance = Math.min(0.8, baseEliteChance * state.difficulty.eliteMult);
+    const eliteChance = Math.min(0.8, baseEliteChance * state.difficulty.eliteMult + (state.activeContract?.eliteChanceBonus ?? 0));
     const elite = state.wave >= 5 && chance(eliteChance);
     e.init(ENEMY_INDEX[entry.defId], pt.x, pt.y, state.wave, elite);
     applyDifficulty(state, e);

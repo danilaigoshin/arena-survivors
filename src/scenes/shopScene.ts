@@ -4,14 +4,15 @@ import { button, panel, inRect, sceneBackground, roundRect, responsiveScene, typ
 import { drawIcon, weaponIcon } from '../render/icons';
 import { drawSprite } from '../render/sprites';
 import { STAT_LABELS, formatStatValue, type Stats } from '../entities/stats';
-import { WeaponInstance } from '../entities/weapon';
+import { WeaponInstance, type WeaponBranchId } from '../entities/weapon';
 import { weaponById, MAX_TIER, TIER_NAMES, TIER_COLORS, type WeaponDef } from '../data/weapons';
+import { WEAPON_BRANCHES, type WeaponBranchDef } from '../data/weaponBranches';
 import { EVOLUTIONS, type EvolutionDef } from '../data/evolutions';
 import { RARITY_COLORS, rarityName } from '../data/rarity';
 import { t as tt, tn } from '../core/i18n';
 import { CLASS_DEFS, WEAPON_CLASS, activeSetBonuses } from '../data/sets';
 import { playSfx } from '../render/audio';
-import { runScene } from './run';
+import { continueToNextWave } from './progressionScene';
 import { displayFont } from '../render/font';
 import { getWaveDef } from '../data/waves';
 import { THEMES } from '../data/maps';
@@ -35,6 +36,8 @@ class ShopScene implements Scene {
   /** purchase timestamps per offer index, for the SOLD-stamp pop */
   private soldAt: number[] = [0, 0, 0, 0];
   private prevSold: boolean[] = [false, false, false, false];
+  /** Pending specialization currently highlighted in the shop. */
+  private branchFocus: WeaponInstance | null = null;
 
   onEnter(): void {
     this.enterAt = performance.now();
@@ -46,6 +49,7 @@ class ShopScene implements Scene {
     this.discount = discount;
     this.soldAt = [0, 0, 0, 0];
     this.prevSold = this.shop.offers.map((o) => o.sold);
+    this.branchFocus = game.state.player.pendingWeaponBranches()[0] ?? null;
   }
 
   private price(offer: ShopOffer, p: Game['state']['player']): number {
@@ -65,18 +69,28 @@ class ShopScene implements Scene {
     return [cx - total / 2 + i * (CARD_W + GAP), this.top(h) + HEADER_H, CARD_W, CARD_H];
   }
 
-  private tryBuy(game: Game, offer: ShopOffer): void {
+  private tryBuy(game: Game, offer: ShopOffer, branchId?: WeaponBranchId): void {
     const p = game.state.player;
     const price = this.price(offer, p);
     if (offer.sold || p.materials < price) return;
     if (offer.kind === 'weapon') {
       if (!p.canUseWeapon(offer.weapon)) return;
       const target = mergeTarget(offer, p);
+      if (target === 3 && !WEAPON_BRANCHES.some((branch) => branch.id === branchId)) return;
       if (target > 1) {
         // merge: raise the lowest-tier duplicate instead of taking a slot
         const owned = p.weapons.filter((w) => w.def.id === offer.weapon.id && w.tier < MAX_TIER);
         owned.sort((a, b) => a.tier - b.tier);
-        owned[0].tier = (owned[0].tier + 1) as WeaponInstance['tier'];
+        const weapon = owned[0];
+        if (!weapon || !p.upgradeWeapon(weapon)) return;
+        if (target === 3 && !p.chooseWeaponBranch(weapon, branchId!)) {
+          // Keep the transaction atomic if stale UI state somehow invalidated
+          // the specialization between rendering and applying the purchase.
+          weapon.tier = 2;
+          weapon.branchPending = false;
+          weapon.branchPendingOrder = 0;
+          return;
+        }
       } else {
         if (!p.canAddWeapon()) return;
         p.weapons.push(new WeaponInstance(offer.weapon, p.weapons.length));
@@ -126,6 +140,51 @@ class ShopScene implements Scene {
     );
   }
 
+  private focusedPendingBranch(game: Game): WeaponInstance | null {
+    const p = game.state.player;
+    if (
+      this.branchFocus &&
+      p.weapons.includes(this.branchFocus) &&
+      this.branchFocus.branchPending &&
+      !this.branchFocus.branch
+    ) {
+      return this.branchFocus;
+    }
+    this.branchFocus = p.pendingWeaponBranches()[0] ?? null;
+    return this.branchFocus;
+  }
+
+  private branchOption(
+    ctx: CanvasRenderingContext2D,
+    ui: UiInput,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    branch: WeaponBranchDef,
+  ): boolean {
+    const hover = inRect(ui, x, y, w, h);
+    const accent = branch.id === 'force' ? '#ffd23e' : '#8be9fd';
+    panel(ctx, x, y, w, h, {
+      radius: 10,
+      fill: hover ? ['#34344a', '#252538'] : ['#29293d', '#1f1f30'],
+      border: hover ? accent : `${accent}66`,
+      glow: hover ? `${accent}44` : undefined,
+    });
+    drawIcon(ctx, branch.icon, x + 24, y + h / 2, 24);
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 12px system-ui, sans-serif';
+    ctx.fillText(tn('br', branch.id, branch.name), x + 45, y + 18, w - 55);
+    ctx.fillStyle = accent;
+    ctx.font = '10px system-ui, sans-serif';
+    ctx.fillText(tn('brs', branch.id, branch.shortDesc), x + 45, y + 38, w - 55);
+    if (!hover || !ui.clicked) return false;
+    ui.clicked = false;
+    playSfx('click');
+    return true;
+  }
+
   update(game: Game, dt: number): void {
     if (this.armedSell) {
       this.armedSell.t -= dt;
@@ -146,7 +205,8 @@ class ShopScene implements Scene {
   }
 
   render(game: Game, ctx: CanvasRenderingContext2D): void {
-    const minHeight = Math.max(620, AWNING_H + 8 + this.statsPanelHeight(game) + ACTIONBAR_H);
+    const branchChoiceSpace = game.state.player.pendingWeaponBranches().length > 0 ? 700 : 620;
+    const minHeight = Math.max(branchChoiceSpace, AWNING_H + 8 + this.statsPanelHeight(game) + ACTIONBAR_H);
     responsiveScene(ctx, game.ui, game.viewport, 1190, minHeight, (w, h, ui) => this.renderContent(game, ctx, w, h, ui));
   }
 
@@ -334,7 +394,22 @@ class ShopScene implements Scene {
               ? tt('shop.dmgCd', d.damage, d.summon.hitCooldown)
               : tt('shop.dmgCd', d.damage, d.cooldown);
         ctx.fillText(desc, cx, y + 176);
-        if (target <= 1 && !p.canAddWeapon()) {
+        if (target === 3) {
+          ctx.fillStyle = '#b18cff';
+          ctx.font = 'bold 9px system-ui, sans-serif';
+          ctx.fillText(tt('shop.chooseModule'), cx, y + 194);
+          WEAPON_BRANCHES.forEach((branch, branchIndex) => {
+            const branchX = x + 55 + branchIndex * 95;
+            const gain = branch.id === 'force' ? tt('shop.damageShort') : tt('shop.speedShort');
+            const cost = branch.id === 'force' ? tt('shop.speedShort') : tt('shop.damageShort');
+            ctx.fillStyle = branch.id === 'force' ? '#ffd23e' : '#8be9fd';
+            ctx.font = 'bold 9px system-ui, sans-serif';
+            ctx.fillText(`+18% ${gain}`, branchX, y + 208);
+            ctx.fillStyle = '#e08a8a';
+            ctx.font = '9px system-ui, sans-serif';
+            ctx.fillText(`−15% ${cost}`, branchX, y + 220);
+          });
+        } else if (target <= 1 && !p.canAddWeapon()) {
           ctx.fillStyle = '#ff8888';
           ctx.fillText(tt('shop.slotsFull'), cx, y + 196);
         }
@@ -386,6 +461,21 @@ class ShopScene implements Scene {
         ctx.textAlign = 'center';
         ctx.fillText(tt('shop.sold'), 0, 1);
         ctx.restore();
+      } else if (offer.kind === 'weapon' && target === 3) {
+        const branchButtonW = 84;
+        WEAPON_BRANCHES.forEach((branch, branchIndex) => {
+          const bx = x + 14 + branchIndex * 93;
+          if (
+            button(ctx, ui, bx, y + CARD_H - 58, branchButtonW, 46, `${price}`, {
+              enabled: affordable,
+              icon: branch.icon,
+              fontSize: 13,
+              labelColor: affordable ? (branch.id === 'force' ? '#ffd23e' : '#8be9fd') : '#e05a5a',
+            })
+          ) {
+            this.pending = () => this.tryBuy(game, offer, branch.id);
+          }
+        });
       } else if (
         button(ctx, ui, x + 18, y + CARD_H - 50, CARD_W - 36, 38, `${price}`, {
           enabled: affordable,
@@ -398,9 +488,41 @@ class ShopScene implements Scene {
       ctx.restore();
     }
 
-    // evolution banner floating just above the action bar
+    // A specialization obtained outside this shop remains optional: it can be
+    // chosen here or safely left pending for a later visit.
+    const pendingBranch = this.focusedPendingBranch(game);
     const evos = this.availableEvolutions(game);
-    if (evos.length > 0) {
+    if (pendingBranch) {
+      const bw = 760;
+      const bh = 64;
+      const bx = ccx - bw / 2;
+      const bannerY = h - ACTIONBAR_H - 76;
+      panel(ctx, bx, bannerY, bw, bh, {
+        radius: 13,
+        fill: ['#222238', '#171724'],
+        border: '#b18cff88',
+        glow: '#b18cff33',
+      });
+      drawIcon(ctx, weaponIcon(pendingBranch.def.id), bx + 28, bannerY + bh / 2, 30);
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#b18cff';
+      ctx.font = 'bold 11px system-ui, sans-serif';
+      ctx.fillText(tt('shop.specialization'), bx + 52, bannerY + 20, 184);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 13px system-ui, sans-serif';
+      ctx.fillText(tn('w', pendingBranch.def.id, pendingBranch.def.name), bx + 52, bannerY + 43, 184);
+      WEAPON_BRANCHES.forEach((branch, branchIndex) => {
+        if (this.branchOption(ctx, ui, bx + 250 + branchIndex * 255, bannerY + 6, 245, 52, branch)) {
+          const weapon = pendingBranch;
+          this.pending = () => {
+            if (!p.chooseWeaponBranch(weapon, branch.id)) return;
+            this.branchFocus = p.pendingWeaponBranches()[0] ?? null;
+            this.armedSell = null;
+            playSfx('levelup');
+          };
+        }
+      });
+    } else if (evos.length > 0) {
       const evo = evos[0];
       const base = weaponById(evo.base);
       const cat = p.items.find((i) => i.id === evo.catalyst)!;
@@ -453,9 +575,7 @@ class ShopScene implements Scene {
     ctx.restore();
     if (button(ctx, ui, btnLeft + 220, by, 260, 56, tt('shop.fight'), { primary: true, fontSize: 18 })) {
       this.pending = () => {
-        game.state.wave++;
-        runScene.enterWave(game);
-        game.setScene(runScene);
+        continueToNextWave(game);
       };
     }
 
@@ -679,23 +799,42 @@ class ShopScene implements Scene {
     ctx.fillStyle = '#8be9fd';
     ctx.font = 'bold 14px system-ui, sans-serif';
     ctx.fillText(tt('shop.weapons', p.weapons.length), x + 18, ry);
-    ctx.fillStyle = this.armedSell ? '#e64553' : '#667';
+    const pendingSpecializations = p.pendingWeaponBranches().length;
+    ctx.fillStyle = pendingSpecializations > 0 ? '#b18cff' : this.armedSell ? '#e64553' : '#667';
     ctx.font = 'bold 11px system-ui, sans-serif';
-    ctx.fillText(this.armedSell ? tt('shop.sellArm') : tt('shop.sellHint'), x + 116, ry);
+    ctx.fillText(
+      pendingSpecializations > 0 ? tt('shop.branchHint') : this.armedSell ? tt('shop.sellArm') : tt('shop.sellHint'),
+      x + 116,
+      ry,
+    );
     ry += 14;
     for (let i = 0; i < 6; i++) {
       const sx = x + 18 + i * 41;
       const wi = p.weapons[i];
-      const hover = wi && p.weapons.length > 1 && inRect(ui, sx, ry, 38, 38);
+      const hover = !!wi && (wi.branchPending || p.weapons.length > 1) && inRect(ui, sx, ry, 38, 38);
       const armed = this.armedSell?.index === i;
+      const branchFocused = !!wi?.branchPending && wi === this.branchFocus;
       panel(ctx, sx, ry, 38, 38, {
         radius: 9,
-        fill: armed ? '#2a1418' : '#12121c',
-        border: armed ? '#e64553' : hover ? '#e6455388' : undefined,
-        glow: armed ? '#e6455366' : undefined,
+        fill: armed ? '#2a1418' : branchFocused ? '#21182e' : '#12121c',
+        border: armed ? '#e64553' : wi?.branchPending ? '#b18cff88' : hover ? '#e6455388' : undefined,
+        glow: armed ? '#e6455366' : branchFocused ? '#b18cff55' : undefined,
       });
       if (wi) {
         drawIcon(ctx, weaponIcon(wi.def.id), sx + 19, ry + 19, 24);
+        if (wi.branch || wi.branchPending) {
+          ctx.fillStyle = wi.branch === 'force' ? '#ffd23e' : wi.branch === 'tempo' ? '#8be9fd' : '#b18cff';
+          ctx.beginPath();
+          ctx.arc(sx + 6, ry + 6, wi.branchPending ? 5 : 4, 0, Math.PI * 2);
+          ctx.fill();
+          if (wi.branchPending) {
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 8px system-ui, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('!', sx + 6, ry + 6.5);
+            ctx.textAlign = 'left';
+          }
+        }
         if (wi.tier > 1 || wi.def.evolved) {
           ctx.fillStyle = wi.def.evolved ? '#ffd23e' : TIER_COLORS[wi.tier - 1];
           roundRect(ctx, sx + 22, ry + 24, 15, 13, 3);
@@ -709,7 +848,11 @@ class ShopScene implements Scene {
         }
         if (hover && ui.clicked) {
           ui.clicked = false;
-          if (armed) {
+          if (wi.branchPending) {
+            this.branchFocus = wi;
+            this.armedSell = null;
+            playSfx('click');
+          } else if (armed) {
             const idx = i;
             this.armedSell = null;
             this.pending = () => this.sellWeapon(game, idx);

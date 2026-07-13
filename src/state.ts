@@ -9,6 +9,8 @@ import { POOL_AREA_EFFECTS, POOL_ENEMIES, POOL_PROJECTILES, POOL_PICKUPS, PICKUP
 import { dist2 } from './utils/math';
 import { THEMES, type MapTheme, type Obstacle } from './data/maps';
 import { DIFFICULTIES, type DifficultyDef } from './data/difficulty';
+import type { WaveContractDef } from './data/contracts';
+import type { WaveObjectiveState } from './data/objectives';
 
 export class RunState {
   difficulty: DifficultyDef = DIFFICULTIES[1];
@@ -35,6 +37,13 @@ export class RunState {
   bossUid = 0; // 0 = no boss alive
   bossDead = false;
   pendingLevelUps = 0;
+  /** How many pending level rewards must use the one-time mechanical talent pool. */
+  pendingTalentLevelUps = 0;
+  /** Optional risk modifier selected for this wave only. */
+  activeContract: WaveContractDef | null = null;
+  /** Optional timed arena objective and materials collected during this wave. */
+  objective: WaveObjectiveState | null = null;
+  waveMaterials = 0;
   /** sim freeze remaining (crit/boss-kill juice) */
   hitStop = 0;
   hitStopCd = 0;
