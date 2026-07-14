@@ -27,8 +27,8 @@ export const WAVE_OBJECTIVES: Record<WaveObjectiveKind, WaveObjectiveDef> = {
 };
 
 export function objectiveTarget(kind: WaveObjectiveKind, wave: number): number {
-  if (kind === 'hunter') return Math.min(54, 12 + wave * 2);
-  if (kind === 'collector') return Math.min(30, 7 + wave);
+  if (kind === 'hunter') return Math.min(48, 11 + Math.floor(wave * 1.8));
+  if (kind === 'collector') return Math.min(24, 6 + Math.floor(wave * 0.8));
   return 7;
 }
 
@@ -39,5 +39,5 @@ export function objectiveTime(kind: WaveObjectiveKind, wave: number): number {
 }
 
 export function objectiveReward(wave: number): number {
-  return Math.round(5 + wave * 0.7);
+  return Math.round(4 + wave * 0.6);
 }

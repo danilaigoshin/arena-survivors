@@ -2,7 +2,7 @@ import type { RunState } from '../state';
 import type { Camera } from '../core/camera';
 import { getWaveDef } from '../data/waves';
 import { ENEMY_INDEX } from '../data/enemies';
-import { ARENA_W, ARENA_H } from '../config';
+import { ARENA_W, ARENA_H, ENEMY_MAX_ALIVE_MULT, ENEMY_SPAWN_INTERVAL_MULT } from '../config';
 import { clamp, lerp } from '../utils/math';
 import { pickWeighted, range, chance } from '../core/rng';
 import { hitsObstacle } from '../data/maps';
@@ -41,12 +41,11 @@ function spawnPointClear(state: RunState, cam: Camera, out: { x: number; y: numb
 
 const pt = { x: 0, y: 0 };
 
-/** Difficulty multipliers are applied after init so enemy.init stays state-free. */
+/** HP difficulty is applied after init so enemy.init stays state-free. */
 function applyDifficulty(state: RunState, e: import('../entities/enemy').Enemy): void {
   const d = state.difficulty;
   e.maxHp = Math.round(e.maxHp * d.hpMult);
   e.hp = e.maxHp;
-  e.contactDamage = Math.round(e.contactDamage * d.dmgMult);
 }
 
 export function spawnBossNow(state: RunState, cam: Camera): void {
@@ -65,7 +64,7 @@ export function updateSpawner(state: RunState, cam: Camera, dt: number): void {
   const endless = getEndlessWaveScaling(state.wave);
   const elapsed = waveDef.duration - state.waveTimer;
   const t = clamp(elapsed / waveDef.duration, 0, 1);
-  const interval = lerp(waveDef.spawnInterval[0], waveDef.spawnInterval[1], t) / (state.activeContract?.spawnRateMult ?? 1);
+  const interval = (lerp(waveDef.spawnInterval[0], waveDef.spawnInterval[1], t) * ENEMY_SPAWN_INTERVAL_MULT) / (state.activeContract?.spawnRateMult ?? 1);
 
   // boss spawns 2s into its wave
   if (waveDef.boss && state.bossUid === 0 && !state.bossDead && elapsed >= 2) {
@@ -75,7 +74,7 @@ export function updateSpawner(state: RunState, cam: Camera, dt: number): void {
   state.spawnTimer -= dt;
   while (state.spawnTimer <= 0) {
     state.spawnTimer += interval;
-    const maxAlive = Math.min(390, Math.round(waveDef.maxAlive * (state.activeContract?.maxAliveMult ?? 1)));
+    const maxAlive = Math.min(390, Math.round(waveDef.maxAlive * ENEMY_MAX_ALIVE_MULT * (state.activeContract?.maxAliveMult ?? 1)));
     if (state.enemies.count >= maxAlive) break;
     const e = state.enemies.alloc();
     if (!e) break;

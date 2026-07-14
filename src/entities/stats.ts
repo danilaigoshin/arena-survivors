@@ -62,5 +62,6 @@ export function formatStatValue(key: keyof Stats, v: number): string {
   const sign = v > 0 ? '+' : '';
   if (key === 'critChance') return `${sign}${Math.round(v * 100)}%`;
   if (key === 'damagePct' || key === 'attackSpeedPct') return `${sign}${Math.round(v)}%`;
+  if (key === 'hpRegen') return `${sign}${Number(v.toFixed(1))}`;
   return `${sign}${Math.round(v)}`;
 }

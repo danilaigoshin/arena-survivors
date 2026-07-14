@@ -24,6 +24,11 @@ export function validateGameContent(): string[] {
     if (!config) problems.push(`weapon without ${weapon.behavior} config: ${weapon.id}`);
   }
 
+  for (const item of ITEMS) {
+    if ((item.modifiers.maxHp ?? 0) > 13) problems.push(`${item.id}: item max-HP bonus exceeds 13`);
+    if ((item.modifiers.hpRegen ?? 0) > 1.5) problems.push(`${item.id}: item HP regen exceeds 1.5`);
+  }
+
   for (const cls of classes) {
     const bases = WEAPONS.filter((weapon) => !weapon.evolved && WEAPON_CLASS[weapon.id] === cls);
     if (bases.length !== 6) problems.push(`${cls}: ${bases.length} base weapons, expected 6`);

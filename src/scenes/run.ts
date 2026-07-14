@@ -1,6 +1,6 @@
 import type { Game, Scene } from '../game';
 import { getWaveDef } from '../data/waves';
-import { FINAL_WAVE, ARENA_W, ARENA_H } from '../config';
+import { FINAL_WAVE, ARENA_W, ARENA_H, WAVE_END_MATERIAL_DROP_MULT } from '../config';
 import { moveAxis, isDown, consumeKeyPress, isTouchDevice, pauseButtonCircle } from '../core/input';
 import { toggleMute, toggleMusic, isMuted, isMusicOn, setMusicIntensity } from '../render/audio';
 import { loadMeta } from '../core/save';
@@ -35,6 +35,7 @@ import { shopScene } from './shopScene';
 import { eventScene } from './eventScene';
 import { endScene } from './endScene';
 import { createWaveObjective, failWaveObjective, updateWaveObjective } from '../systems/objectives';
+import { chance } from '../core/rng';
 
 const axis = { x: 0, y: 0 };
 const dir = { x: 0, y: 0 };
@@ -480,11 +481,14 @@ class RunScene implements Scene {
     s.vacuum = true;
     failWaveObjective(s);
     s.player.clearAbilityEffects();
-    // remaining enemies die and drop their materials
+    // Undefeated enemies only yield partial salvage. Fractional values are
+    // rolled instead of guaranteeing one gem per survivor at wave end.
     for (let i = 0; i < s.enemies.count; i++) {
       const e = s.enemies.items[i];
       if (e.active && !e.isBoss) {
-        s.dropMaterials(e.x, e.y, Math.max(1, Math.round(e.def.materialDrop * 0.5 * (s.activeContract?.materialMult ?? 1))));
+        const expected = e.def.materialDrop * WAVE_END_MATERIAL_DROP_MULT * (s.activeContract?.materialMult ?? 1);
+        const amount = Math.floor(expected) + (chance(expected - Math.floor(expected)) ? 1 : 0);
+        if (amount > 0) s.dropMaterials(e.x, e.y, amount);
         e.active = false;
       }
     }

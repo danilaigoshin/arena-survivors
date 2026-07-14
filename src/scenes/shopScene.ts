@@ -763,7 +763,7 @@ class ShopScene implements Scene {
     const stats = p.stats;
     const cells: [string, string, string][] = [
       ['❤️', `${stats.maxHp}`, '#ff9a9a'],
-      ['💚', `${stats.hpRegen}/5s`, '#8dff9a'],
+      ['💚', `${Number(stats.hpRegen.toFixed(1))}/5s`, '#8dff9a'],
       ['⚔️', `+${Math.round(stats.damagePct)}%`, '#ffd23e'],
       ['⚡', `+${Math.round(stats.attackSpeedPct)}%`, '#ffd23e'],
       ['💨', `${Math.round(stats.moveSpeed)}`, '#c8c8dc'],

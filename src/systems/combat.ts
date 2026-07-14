@@ -8,7 +8,7 @@ import { norm, dist2 } from '../utils/math';
 import { armorReduction } from '../entities/stats';
 import { spawnBurst, spawnDamageNumber, spawnGibs, spawnSparks, spawnRing, flashScreen, spawnDeathPop, stampGoo, addShake, addKick } from '../render/fx';
 import { playSfx } from '../render/audio';
-import { PLAYER_IFRAMES } from '../config';
+import { ENEMY_DAMAGE_MULT, ENEMY_MATERIAL_DROP_MULT, PLAYER_IFRAMES } from '../config';
 import { hitsObstacle } from '../data/maps';
 import type { AreaEffect } from '../entities/areaEffect';
 import { branchAttackSpeedMultiplier, branchDamageMultiplier } from '../data/weaponBranches';
@@ -73,8 +73,9 @@ export function damageEnemy(
     e.active = false; // swept at end of step
     state.kills++;
     if (e.isBoss) state.bossDead = true;
-    // gem economy: expected drop is materialDrop × 0.5, fractional part becomes a chance (0 is possible)
-    const expected = e.def.materialDrop * (e.elite ? 4 : 1) * 0.5 * (state.activeContract?.materialMult ?? 1) * range(0.85, 1.15);
+    // Fractional expected drops become a chance, so weak enemies are no longer
+    // guaranteed to pay out while elites and bosses still feel rewarding.
+    const expected = e.def.materialDrop * (e.elite ? 4 : 1) * ENEMY_MATERIAL_DROP_MULT * (state.activeContract?.materialMult ?? 1) * range(0.85, 1.15);
     const amount = Math.floor(expected) + (chance(expected - Math.floor(expected)) ? 1 : 0);
     if (amount > 0) state.dropMaterials(e.x, e.y, amount);
     // splitters burst into smaller slimes
@@ -168,7 +169,12 @@ export function damagePlayer(state: RunState, rawDmg: number): void {
     playSfx('magic');
     return;
   }
-  const dmg = armorReduction(rawDmg * (state.activeContract?.enemyDamageMult ?? 1), p.stats.armor);
+  // Apply difficulty at impact time so contact hits, projectiles, summons and
+  // environmental enemy hazards all use exactly the same damage scaling.
+  const dmg = armorReduction(
+    rawDmg * state.difficulty.dmgMult * ENEMY_DAMAGE_MULT * (state.activeContract?.enemyDamageMult ?? 1),
+    p.stats.armor,
+  );
   p.hp -= dmg;
   p.momentumT = 0;
   p.iframes = PLAYER_IFRAMES;

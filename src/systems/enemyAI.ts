@@ -26,7 +26,7 @@ function bossFire(state: RunState, e: import('../entities/enemy').Enemy, angle: 
     e.y,
     Math.cos(angle) * sh.projSpeed * endless.speedMult,
     Math.sin(angle) * sh.projSpeed * endless.speedMult,
-    Math.round(sh.damage * state.difficulty.dmgMult * endless.damageMult),
+    Math.round(sh.damage * endless.damageMult),
     0,
     4,
     false,
@@ -245,7 +245,7 @@ export function updateEnemies(state: RunState, dt: number): void {
       e.shootCd -= dt;
       if (e.shootCd <= 0 && dist <= def.shoot.range) {
         e.shootCd = def.shoot.cooldown / endless.attackRateMult;
-        state.spawnProjectile(e.x, e.y, dir.x * def.shoot.projSpeed * endless.speedMult, dir.y * def.shoot.projSpeed * endless.speedMult, Math.round(def.shoot.damage * state.difficulty.dmgMult * endless.damageMult), 0, 3, false, false, def.slowShot ? 'frost' : '');
+        state.spawnProjectile(e.x, e.y, dir.x * def.shoot.projSpeed * endless.speedMult, dir.y * def.shoot.projSpeed * endless.speedMult, Math.round(def.shoot.damage * endless.damageMult), 0, 3, false, false, def.slowShot ? 'frost' : '');
       }
     } else {
       norm(p.x - e.x, p.y - e.y, dir);
