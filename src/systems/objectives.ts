@@ -52,16 +52,20 @@ export function updateWaveObjective(state: RunState, dt: number): void {
   } else if (objective.kind === 'collector') {
     objective.progress = state.waveMaterials;
   } else {
-    const dx = state.player.x - objective.x;
-    const dy = state.player.y - objective.y;
-    if (dx * dx + dy * dy <= objective.radius ** 2) objective.progress = Math.min(objective.target, objective.progress + dt);
+    const occupied = state.alivePlayers().some((player) => {
+      const dx = player.x - objective.x;
+      const dy = player.y - objective.y;
+      return dx * dx + dy * dy <= objective.radius ** 2;
+    });
+    if (occupied) objective.progress = Math.min(objective.target, objective.progress + dt);
   }
 
   if (objective.progress >= objective.target) {
     objective.completed = true;
-    state.player.materials += objective.reward;
-    spawnRing(objective.kind === 'hold' ? objective.x : state.player.x, objective.kind === 'hold' ? objective.y : state.player.y, '#8dff9a');
-    spawnBurst(state.player.x, state.player.y, '#8dff9a', 12);
+    state.squad.materials += objective.reward;
+    const player = state.alivePlayers()[0] ?? state.players[0];
+    spawnRing(objective.kind === 'hold' ? objective.x : player.x, objective.kind === 'hold' ? objective.y : player.y, '#8dff9a');
+    spawnBurst(player.x, player.y, '#8dff9a', 12);
     playSfx('levelup');
   } else if (objective.timeLeft <= 0) {
     objective.failed = true;

@@ -11,6 +11,38 @@ import { THEMES, type MapTheme, type Obstacle } from './data/maps';
 import { DIFFICULTIES, type DifficultyDef } from './data/difficulty';
 import type { WaveContractDef } from './data/contracts';
 import type { WaveObjectiveState } from './data/objectives';
+import type { PlayerSlot, SquadState } from './multiplayer/types';
+import { createPendingChoices } from './systems/squad';
+
+export interface BattlefieldChest {
+  uid: number;
+  x: number;
+  y: number;
+}
+
+export interface BomberExplosion {
+  uid: number;
+  x: number;
+  y: number;
+  t: number;
+  radius: number;
+  damage: number;
+}
+
+export interface FirePatch {
+  uid: number;
+  x: number;
+  y: number;
+  ttl: number;
+}
+
+let nextDynamicUid = 1;
+
+function dynamicUid(): number {
+  const uid = nextDynamicUid++;
+  if (nextDynamicUid > 0xffff_ffff) nextDynamicUid = 1;
+  return uid;
+}
 
 export class RunState {
   difficulty: DifficultyDef = DIFFICULTIES[1];
@@ -18,12 +50,13 @@ export class RunState {
   obstacles: Obstacle[] = [];
   floorCanvas: HTMLCanvasElement | null = null;
   /** battlefield chests waiting to be opened */
-  chests: { x: number; y: number }[] = [];
+  chests: BattlefieldChest[] = [];
   /** bomber death explosions: telegraph, then boom at t<=0 */
-  explosions: { x: number; y: number; t: number; radius: number; damage: number }[] = [];
+  explosions: BomberExplosion[] = [];
   /** burning ground left by the Brute's charges */
-  firePatches: { x: number; y: number; ttl: number }[] = [];
-  player = new Player();
+  firePatches: FirePatch[] = [];
+  players: Player[];
+  squad: SquadState = { xp: 0, level: 1, materials: 0 };
   enemies = new Pool(POOL_ENEMIES, () => new Enemy());
   projectiles = new Pool(POOL_PROJECTILES, () => new Projectile());
   areaEffects = new Pool(POOL_AREA_EFFECTS, () => new AreaEffect());
@@ -36,9 +69,9 @@ export class RunState {
   spawnTimer = 0;
   bossUid = 0; // 0 = no boss alive
   bossDead = false;
-  pendingLevelUps = 0;
+  pendingLevelUps = createPendingChoices();
   /** How many pending level rewards must use the one-time mechanical talent pool. */
-  pendingTalentLevelUps = 0;
+  pendingTalentLevelUps = createPendingChoices();
   /** Optional risk modifier selected for this wave only. */
   activeContract: WaveContractDef | null = null;
   /** Optional timed arena objective and materials collected during this wave. */
@@ -50,14 +83,70 @@ export class RunState {
   /** end-of-wave vacuum: all pickups fly to the player */
   vacuum = false;
 
-  spawnProjectile(x: number, y: number, vx: number, vy: number, damage: number, pierce: number, ttl: number, friendly: boolean, crit = false, style = '', variant = 0): Projectile {
+  constructor(players: Player[] = [new Player(0)]) {
+    if (players.length < 1 || players.length > 2) throw new Error('RunState requires one or two players');
+    this.players = players;
+  }
+
+  alivePlayers(): Player[] {
+    return this.players.filter((player) => !player.downed && player.hp > 0);
+  }
+
+  nearestAlivePlayer(x: number, y: number): Player | null {
+    let nearest: Player | null = null;
+    let nearestDistance = Infinity;
+    for (const player of this.players) {
+      if (player.downed || player.hp <= 0) continue;
+      const distance = dist2(player.x, player.y, x, y);
+      if (distance < nearestDistance || (distance === nearestDistance && nearest !== null && player.slot < nearest.slot)) {
+        nearest = player;
+        nearestDistance = distance;
+      }
+    }
+    return nearest;
+  }
+
+  playerBySlot(slot: PlayerSlot): Player | null {
+    return this.players.find((player) => player.slot === slot) ?? null;
+  }
+
+  allPlayersDowned(): boolean {
+    return this.players.every((player) => player.downed || player.hp <= 0);
+  }
+
+  createChest(x: number, y: number): BattlefieldChest {
+    return { uid: dynamicUid(), x, y };
+  }
+
+  createExplosion(x: number, y: number, t: number, radius: number, damage: number): BomberExplosion {
+    return { uid: dynamicUid(), x, y, t, radius, damage };
+  }
+
+  createFirePatch(x: number, y: number, ttl: number): FirePatch {
+    return { uid: dynamicUid(), x, y, ttl };
+  }
+
+  spawnProjectile(
+    x: number,
+    y: number,
+    vx: number,
+    vy: number,
+    damage: number,
+    pierce: number,
+    ttl: number,
+    friendly: boolean,
+    crit = false,
+    style = '',
+    variant = 0,
+    ownerPlayerSlot: PlayerSlot | null = null,
+  ): Projectile {
     let p = this.projectiles.alloc();
     if (!p) {
       // recycle oldest slot
       p = this.projectiles.items[0];
     }
     p.active = true;
-    p.init(x, y, vx, vy, damage, pierce, ttl, friendly, crit, style, variant);
+    p.init(x, y, vx, vy, damage, pierce, ttl, friendly, crit, style, variant, ownerPlayerSlot);
     return p;
   }
 

@@ -1,10 +1,11 @@
 import type { Game, Scene } from '../game';
 import { rollShop, reroll, effectivePrice, mergeTarget, type ShopState, type ShopOffer } from '../systems/shop';
-import { button, panel, inRect, sceneBackground, roundRect, responsiveScene, type UiInput } from '../render/ui';
+import { button, dimBackground, panel, inRect, sceneBackground, roundRect, responsiveScene, type UiInput } from '../render/ui';
 import { drawIcon, weaponIcon } from '../render/icons';
 import { drawSprite } from '../render/sprites';
 import { STAT_LABELS, formatStatValue, type Stats } from '../entities/stats';
 import { WeaponInstance, type WeaponBranchId } from '../entities/weapon';
+import type { Player } from '../entities/player';
 import { weaponById, MAX_TIER, TIER_NAMES, TIER_COLORS, type WeaponDef } from '../data/weapons';
 import { WEAPON_BRANCHES, type WeaponBranchDef } from '../data/weaponBranches';
 import { EVOLUTIONS, type EvolutionDef } from '../data/evolutions';
@@ -12,10 +13,24 @@ import { RARITY_COLORS, rarityName } from '../data/rarity';
 import { t as tt, tn } from '../core/i18n';
 import { CLASS_DEFS, WEAPON_CLASS, activeSetBonuses } from '../data/sets';
 import { playSfx } from '../render/audio';
-import { continueToNextWave } from './progressionScene';
+import { continueToNextWave, progressionScene } from './progressionScene';
 import { displayFont } from '../render/font';
 import { getWaveDef } from '../data/waves';
 import { THEMES } from '../data/maps';
+import { ITEMS } from '../data/items';
+import { WEAPONS } from '../data/weapons';
+import { GuestSession, HostSession } from '../multiplayer/session';
+import {
+  applyShopCommand,
+  type AuthoritativeShopPhase,
+  type ShopCommand,
+} from '../multiplayer/shopAuthority';
+import type {
+  SerializedShopState,
+  ShopPhase,
+} from '../multiplayer/stateProtocol';
+import { runScene } from './run';
+import { menuScene } from './menu';
 
 const CARD_W = 205;
 const CARD_H = 290;
@@ -24,6 +39,47 @@ const PANEL_W = 280;
 const HEADER_H = 116;
 const AWNING_H = 40;
 const ACTIONBAR_H = 88;
+const shopWeaponById = new Map(WEAPONS.map((definition) => [definition.id, definition]));
+const shopItemById = new Map(ITEMS.map((definition) => [definition.id, definition]));
+
+function serializeShop(shop: ShopState): SerializedShopState {
+  return {
+    offers: shop.offers.map((offer) => ({
+      kind: offer.kind,
+      definitionId: offer.kind === 'weapon' ? offer.weapon.id : offer.item.id,
+      price: offer.price,
+      sold: offer.sold,
+    })),
+    rerollCost: shop.rerollCost,
+    rerollCount: shop.rerollCount,
+  };
+}
+
+function hydrateShop(shop: SerializedShopState): ShopState | null {
+  if (
+    shop.offers.length !== 4
+    || !Number.isSafeInteger(shop.rerollCost)
+    || shop.rerollCost < 0
+    || !Number.isSafeInteger(shop.rerollCount)
+    || shop.rerollCount < 0
+  ) return null;
+  const offers: ShopOffer[] = [];
+  for (const offer of shop.offers) {
+    if (!Number.isSafeInteger(offer.price) || offer.price < 0 || typeof offer.sold !== 'boolean') return null;
+    if (offer.kind === 'weapon') {
+      const weapon = shopWeaponById.get(offer.definitionId);
+      if (!weapon) return null;
+      offers.push({ kind: 'weapon', weapon, price: offer.price, sold: offer.sold });
+    } else if (offer.kind === 'item') {
+      const item = shopItemById.get(offer.definitionId);
+      if (!item) return null;
+      offers.push({ kind: 'item', item, price: offer.price, sold: offer.sold });
+    } else {
+      return null;
+    }
+  }
+  return { offers, rerollCost: shop.rerollCost, rerollCount: shop.rerollCount };
+}
 
 class ShopScene implements Scene {
   shop!: ShopState;
@@ -38,22 +94,187 @@ class ShopScene implements Scene {
   private prevSold: boolean[] = [false, false, false, false];
   /** Pending specialization currently highlighted in the shop. */
   private branchFocus: WeaponInstance | null = null;
+  private networkPhase: AuthoritativeShopPhase | null = null;
+  private networkPhaseRevision = 0;
+  private connectionExit = false;
 
   onEnter(): void {
     this.enterAt = performance.now();
   }
 
   enter(game: Game, discount = 1): void {
-    this.shop = rollShop(game.state.wave, game.state.player);
+    const hostSession = game.networkSession instanceof HostSession ? game.networkSession : null;
+    if (hostSession && game.state.players.length === 2) {
+      const hostShop = rollShop(game.state.wave, game.state.players[0]);
+      const guestShop = rollShop(game.state.wave, game.state.players[1]);
+      this.networkPhase = {
+        phaseRevision: hostSession.nextPhaseRevision(),
+        shops: [hostShop, guestShop],
+        ready: [false, false],
+        discount,
+      };
+      this.networkPhaseRevision = this.networkPhase.phaseRevision;
+      this.shop = hostShop;
+      this.publishNetworkShop(hostSession);
+    } else {
+      this.networkPhase = null;
+      this.networkPhaseRevision = 0;
+      this.shop = rollShop(game.state.wave, game.localPlayer);
+    }
     this.armedSell = null;
     this.discount = discount;
     this.soldAt = [0, 0, 0, 0];
     this.prevSold = this.shop.offers.map((o) => o.sold);
-    this.branchFocus = game.state.player.pendingWeaponBranches()[0] ?? null;
+    this.branchFocus = game.localPlayer.pendingWeaponBranches()[0] ?? null;
   }
 
-  private price(offer: ShopOffer, p: Game['state']['player']): number {
+  enterRemote(game: Game, phase: ShopPhase): boolean {
+    const shop = hydrateShop(phase.shops[game.localPlayerSlot]);
+    if (!shop) return false;
+    this.networkPhase = null;
+    this.networkPhaseRevision = phase.phaseRevision;
+    this.shop = shop;
+    this.armedSell = null;
+    this.discount = phase.discount;
+    this.soldAt = [0, 0, 0, 0];
+    this.prevSold = shop.offers.map((offer) => offer.sold);
+    this.branchFocus = game.localPlayer.pendingWeaponBranches()[0] ?? null;
+    return true;
+  }
+
+  private price(offer: ShopOffer, p: Player): number {
     return Math.max(1, Math.round(effectivePrice(offer, p) * this.discount));
+  }
+
+  private publishNetworkShop(session: HostSession): void {
+    const phase = this.networkPhase;
+    if (!phase) return;
+    session.publishPhase({
+      version: 1,
+      phase: 'shop',
+      phaseRevision: phase.phaseRevision,
+      shops: [serializeShop(phase.shops[0]), serializeShop(phase.shops[1])],
+      ready: [...phase.ready],
+      discount: phase.discount,
+    });
+  }
+
+  private startNextNetworkWave(game: Game, session: HostSession): void {
+    this.networkPhase = null;
+    continueToNextWave(game);
+  }
+
+  private applyNetworkCommand(game: Game, session: HostSession, command: ShopCommand): void {
+    const phase = this.networkPhase;
+    if (!phase) return;
+    const result = applyShopCommand(game.state, phase, command);
+    if (result.accepted && command.type !== 'ready') session.publishBuild(game);
+    this.shop = phase.shops[game.localPlayerSlot];
+    this.publishNetworkShop(session);
+    if (result.accepted && result.startNextWave) this.startNextNetworkWave(game, session);
+  }
+
+  private sendGuestCommand(game: Game, command: string, ids: string[] = [], value?: number | boolean): void {
+    const session = game.networkSession;
+    if (!(session instanceof GuestSession) || this.networkPhaseRevision <= 0) return;
+    session.sendPhaseCommand(this.networkPhaseRevision, command, ids, value);
+  }
+
+  private submitNetworkCommand(game: Game, command: ShopCommand): boolean {
+    const session = game.networkSession;
+    if (session instanceof HostSession && this.networkPhase) {
+      this.applyNetworkCommand(game, session, command);
+      return true;
+    }
+    if (session instanceof GuestSession) {
+      const ids: string[] = [];
+      let value: number | boolean | undefined;
+      if (command.type === 'buy') {
+        ids.push(String(command.offerIndex));
+        if (command.branchId) ids.push(command.branchId);
+      } else if (command.type === 'sell' || command.type === 'branch') {
+        ids.push(String(command.weaponSlot));
+        if (command.type === 'branch') ids.push(command.branchId);
+      } else if (command.type === 'evolve') {
+        ids.push(command.evolutionId);
+      } else if (command.type === 'ready') {
+        value = command.ready;
+      }
+      this.sendGuestCommand(game, `shop-${command.type}`, ids, value);
+      return true;
+    }
+    return false;
+  }
+
+  private parseGuestCommand(message: {
+    phaseRevision: number;
+    command: string;
+    ids: string[];
+    value?: number | boolean;
+  }): ShopCommand | null {
+    const base = { phaseRevision: message.phaseRevision, slot: 1 as const };
+    if (message.command === 'shop-buy' && (message.ids.length === 1 || message.ids.length === 2)) {
+      const offerIndex = Number(message.ids[0]);
+      const branchId = message.ids[1];
+      if (!Number.isInteger(offerIndex) || offerIndex < 0 || offerIndex > 3) return null;
+      if (branchId !== undefined && !WEAPON_BRANCHES.some((branch) => branch.id === branchId)) return null;
+      return {
+        ...base,
+        type: 'buy',
+        offerIndex,
+        branchId: branchId as WeaponBranchId | undefined,
+      };
+    }
+    if (message.command === 'shop-reroll' && message.ids.length === 0) {
+      return { ...base, type: 'reroll' };
+    }
+    if (message.command === 'shop-sell' && message.ids.length === 1) {
+      const weaponSlot = Number(message.ids[0]);
+      return Number.isInteger(weaponSlot) && weaponSlot >= 0 && weaponSlot < 6
+        ? { ...base, type: 'sell', weaponSlot }
+        : null;
+    }
+    if (message.command === 'shop-branch' && message.ids.length === 2) {
+      const weaponSlot = Number(message.ids[0]);
+      const branchId = message.ids[1];
+      return Number.isInteger(weaponSlot)
+        && weaponSlot >= 0
+        && weaponSlot < 6
+        && WEAPON_BRANCHES.some((branch) => branch.id === branchId)
+        ? { ...base, type: 'branch', weaponSlot, branchId: branchId as WeaponBranchId }
+        : null;
+    }
+    if (message.command === 'shop-evolve' && message.ids.length === 1) {
+      return EVOLUTIONS.some((evolution) => evolution.result === message.ids[0])
+        ? { ...base, type: 'evolve', evolutionId: message.ids[0] }
+        : null;
+    }
+    if (message.command === 'shop-ready' && message.ids.length === 0 && typeof message.value === 'boolean') {
+      return { ...base, type: 'ready', ready: message.value };
+    }
+    return null;
+  }
+
+  private syncGuestPhase(game: Game, session: GuestSession): void {
+    const phase = session.phaseState;
+    if (!phase) return;
+    if (phase.phase === 'run' && phase.phaseRevision > this.networkPhaseRevision) {
+      game.state.wave = phase.wave;
+      runScene.enterWave(game);
+      game.setScene(runScene, true);
+      return;
+    }
+    if (phase.phase === 'progression' && phase.phaseRevision > this.networkPhaseRevision) {
+      progressionScene.enterRemote(game, phase);
+      game.setScene(progressionScene, true);
+      return;
+    }
+    if (phase.phase !== 'shop' || phase.phaseRevision !== this.networkPhaseRevision) return;
+    const shop = hydrateShop(phase.shops[game.localPlayerSlot]);
+    if (!shop) return;
+    this.shop = shop;
+    this.discount = phase.discount;
+    this.branchFocus = game.localPlayer.pendingWeaponBranches()[0] ?? null;
   }
 
   /** Top of the header block: centered between the awning and the action bar. */
@@ -70,9 +291,24 @@ class ShopScene implements Scene {
   }
 
   private tryBuy(game: Game, offer: ShopOffer, branchId?: WeaponBranchId): void {
-    const p = game.state.player;
+    const offerIndex = this.shop.offers.indexOf(offer);
+    if (
+      offerIndex >= 0
+      && game.sessionRole !== 'solo'
+      && this.submitNetworkCommand(game, {
+        type: 'buy',
+        phaseRevision: this.networkPhase?.phaseRevision ?? this.networkPhaseRevision,
+        slot: game.localPlayerSlot,
+        offerIndex,
+        branchId,
+      })
+    ) {
+      playSfx('click');
+      return;
+    }
+    const p = game.localPlayer;
     const price = this.price(offer, p);
-    if (offer.sold || p.materials < price) return;
+    if (offer.sold || game.state.squad.materials < price) return;
     if (offer.kind === 'weapon') {
       if (!p.canUseWeapon(offer.weapon)) return;
       const target = mergeTarget(offer, p);
@@ -99,24 +335,48 @@ class ShopScene implements Scene {
     } else {
       p.addItem(offer.item);
     }
-    p.materials -= price;
+    game.state.squad.materials -= price;
     offer.sold = true;
     playSfx('buy');
   }
 
   private sellWeapon(game: Game, index: number): void {
-    const p = game.state.player;
+    const p = game.localPlayer;
     const w = p.weapons[index];
     if (!w || p.weapons.length <= 1) return; // never sell the last weapon
+    if (
+      game.sessionRole !== 'solo'
+      && this.submitNetworkCommand(game, {
+        type: 'sell',
+        phaseRevision: this.networkPhase?.phaseRevision ?? this.networkPhaseRevision,
+        slot: game.localPlayerSlot,
+        weaponSlot: w.slotIndex,
+      })
+    ) {
+      playSfx('click');
+      return;
+    }
     p.weapons.splice(index, 1);
     p.weapons.forEach((wi, i) => (wi.slotIndex = i));
     p.recomputeStats(); // set bonuses may have changed
-    p.materials += Math.max(1, Math.round(w.def.price * w.tier * 0.6));
+    game.state.squad.materials += Math.max(1, Math.round(w.def.price * w.tier * 0.6));
     playSfx('buy');
   }
 
   private tryEvolve(game: Game, evo: EvolutionDef): void {
-    const p = game.state.player;
+    if (
+      game.sessionRole !== 'solo'
+      && this.submitNetworkCommand(game, {
+        type: 'evolve',
+        phaseRevision: this.networkPhase?.phaseRevision ?? this.networkPhaseRevision,
+        slot: game.localPlayerSlot,
+        evolutionId: evo.result,
+      })
+    ) {
+      playSfx('click');
+      return;
+    }
+    const p = game.localPlayer;
     const weapon = p.weapons.find((w) => w.def.id === evo.base && (w.def.evolved || w.tier >= MAX_TIER));
     const itemIdx = p.items.findIndex((i) => i.id === evo.catalyst);
     if (!weapon || itemIdx < 0) return;
@@ -129,9 +389,29 @@ class ShopScene implements Scene {
     playSfx('levelup');
   }
 
+  private chooseBranch(game: Game, weapon: WeaponInstance, branchId: WeaponBranchId): void {
+    if (
+      game.sessionRole !== 'solo'
+      && this.submitNetworkCommand(game, {
+        type: 'branch',
+        phaseRevision: this.networkPhase?.phaseRevision ?? this.networkPhaseRevision,
+        slot: game.localPlayerSlot,
+        weaponSlot: weapon.slotIndex,
+        branchId,
+      })
+    ) {
+      playSfx('click');
+      return;
+    }
+    if (!game.localPlayer.chooseWeaponBranch(weapon, branchId)) return;
+    this.branchFocus = game.localPlayer.pendingWeaponBranches()[0] ?? null;
+    this.armedSell = null;
+    playSfx('levelup');
+  }
+
   /** Evolutions currently available to the player. */
   private availableEvolutions(game: Game): EvolutionDef[] {
-    const p = game.state.player;
+    const p = game.localPlayer;
     return EVOLUTIONS.filter(
       (e) =>
         (!e.minWave || game.state.wave >= e.minWave) &&
@@ -141,7 +421,7 @@ class ShopScene implements Scene {
   }
 
   private focusedPendingBranch(game: Game): WeaponInstance | null {
-    const p = game.state.player;
+    const p = game.localPlayer;
     if (
       this.branchFocus &&
       p.weapons.includes(this.branchFocus) &&
@@ -186,6 +466,28 @@ class ShopScene implements Scene {
   }
 
   update(game: Game, dt: number): void {
+    const session = game.networkSession;
+    if (session?.status === 'connection-lost') {
+      if (this.connectionExit) {
+        this.connectionExit = false;
+        game.networkSession = null;
+        game.sessionRole = 'solo';
+        void session.close();
+        game.setScene(menuScene, true);
+      }
+      return;
+    }
+    if (session instanceof HostSession && this.networkPhase) {
+      for (const message of session.drainPhaseCommands()) {
+        const command = this.parseGuestCommand(message);
+        if (command) this.applyNetworkCommand(game, session, command);
+        else this.publishNetworkShop(session);
+        if (!this.networkPhase) return;
+      }
+    } else if (session instanceof GuestSession) {
+      this.syncGuestPhase(game, session);
+      if (game.scene !== this) return;
+    }
     if (this.armedSell) {
       this.armedSell.t -= dt;
       if (this.armedSell.t <= 0) this.armedSell = null;
@@ -198,20 +500,34 @@ class ShopScene implements Scene {
   }
 
   private statsPanelHeight(game: Game): number {
-    const p = game.state.player;
+    const p = game.localPlayer;
     const itemRows = Math.max(1, Math.ceil(Math.min(24, p.items.length || 1) / 6));
     const sets = activeSetBonuses(p.weapons.map((wi) => wi.def.id));
     return 100 + 5 * 26 + 16 + 76 + (sets.length > 0 ? 24 + sets.length * 34 : 0) + 30 + itemRows * 41 + 16;
   }
 
   render(game: Game, ctx: CanvasRenderingContext2D): void {
-    const branchChoiceSpace = game.state.player.pendingWeaponBranches().length > 0 ? 700 : 620;
+    const branchChoiceSpace = game.localPlayer.pendingWeaponBranches().length > 0 ? 700 : 620;
     const minHeight = Math.max(branchChoiceSpace, AWNING_H + 8 + this.statsPanelHeight(game) + ACTIONBAR_H);
     responsiveScene(ctx, game.ui, game.viewport, 1190, minHeight, (w, h, ui) => this.renderContent(game, ctx, w, h, ui));
+    if (game.networkSession?.status === 'connection-lost') {
+      const w = game.width;
+      const h = game.height;
+      dimBackground(ctx, w, h);
+      panel(ctx, w / 2 - 220, h / 2 - 100, 440, 200, { radius: 18, border: '#ff547066' });
+      ctx.fillStyle = '#ff7080';
+      ctx.font = displayFont(20);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(tt('coop.connectionLost'), w / 2, h / 2 - 42);
+      if (button(ctx, game.ui, w / 2 - 120, h / 2 + 20, 240, 50, tt('coop.leave'))) {
+        this.connectionExit = true;
+      }
+    }
   }
 
   private renderContent(game: Game, ctx: CanvasRenderingContext2D, w: number, h: number, ui: UiInput): void {
-    const p = game.state.player;
+    const p = game.localPlayer;
     const t = performance.now() / 1000;
     const top = this.top(h);
     const ccx = (w - PANEL_W - 40) / 2; // content center x
@@ -284,7 +600,7 @@ class ShopScene implements Scene {
     ctx.fillStyle = '#8be9fd';
     ctx.font = displayFont(15);
     ctx.textAlign = 'left';
-    ctx.fillText(`${p.materials}`, rowRight - 90, top + 73);
+    ctx.fillText(`${game.state.squad.materials}`, rowRight - 90, top + 73);
 
     // offer cards
     const sinceEnter = (performance.now() - this.enterAt) / 1000;
@@ -439,7 +755,7 @@ class ShopScene implements Scene {
       ctx.globalAlpha = ek;
 
       const price = this.price(offer, p);
-      const affordable = !offer.sold && p.materials >= price && (offer.kind !== 'weapon' || target > 1 || p.canAddWeapon());
+      const affordable = !offer.sold && game.state.squad.materials >= price && (offer.kind !== 'weapon' || target > 1 || p.canAddWeapon());
       if (offer.sold) {
         // rotated SOLD stamp, popping in on purchase
         const age = (performance.now() - this.soldAt[i]) / 1000;
@@ -514,12 +830,7 @@ class ShopScene implements Scene {
       WEAPON_BRANCHES.forEach((branch, branchIndex) => {
         if (this.branchOption(ctx, ui, bx + 250 + branchIndex * 255, bannerY + 6, 245, 52, branch)) {
           const weapon = pendingBranch;
-          this.pending = () => {
-            if (!p.chooseWeaponBranch(weapon, branch.id)) return;
-            this.branchFocus = p.pendingWeaponBranches()[0] ?? null;
-            this.armedSell = null;
-            playSfx('levelup');
-          };
+          this.pending = () => this.chooseBranch(game, weapon, branch.id);
         }
       });
     } else if (evos.length > 0) {
@@ -555,12 +866,23 @@ class ShopScene implements Scene {
     const btnLeft = Math.max(ccx - 220, 20 + 240 + 24); // clear of the next-wave chip
     if (
       button(ctx, ui, btnLeft, by, 200, 56, tt('shop.reroll', this.shop.rerollCost), {
-        enabled: p.materials >= this.shop.rerollCost,
+        enabled: game.state.squad.materials >= this.shop.rerollCost,
         icon: 'i_gem',
       })
     ) {
       this.pending = () => {
-        if (reroll(this.shop, game.state.wave, game.state.player)) playSfx('reroll');
+        if (
+          game.sessionRole !== 'solo'
+          && this.submitNetworkCommand(game, {
+            type: 'reroll',
+            phaseRevision: this.networkPhase?.phaseRevision ?? this.networkPhaseRevision,
+            slot: game.localPlayerSlot,
+          })
+        ) {
+          playSfx('click');
+          return;
+        }
+        if (reroll(this.shop, game.state.wave, game.localPlayer, game.state.squad)) playSfx('reroll');
       };
     }
     // pulsing golden halo behind FIGHT
@@ -573,10 +895,41 @@ class ShopScene implements Scene {
     roundRect(ctx, btnLeft + 217, by - 3, 266, 62, 12);
     ctx.stroke();
     ctx.restore();
-    if (button(ctx, ui, btnLeft + 220, by, 260, 56, tt('shop.fight'), { primary: true, fontSize: 18 })) {
+    const guestPhase = game.networkSession instanceof GuestSession
+      && game.networkSession.phaseState?.phase === 'shop'
+      ? game.networkSession.phaseState
+      : null;
+    const ready = this.networkPhase?.ready ?? guestPhase?.ready ?? [false, false];
+    const localReady = ready[game.localPlayerSlot];
+    const networkShop = game.sessionRole !== 'solo';
+    const actionLabel = networkShop
+      ? localReady ? tt('coop.notReadyNextWave') : tt('coop.readyNextWave')
+      : tt('shop.fight');
+    if (button(ctx, ui, btnLeft + 220, by, 260, 56, actionLabel, { primary: true, fontSize: networkShop ? 12 : 18 })) {
       this.pending = () => {
-        continueToNextWave(game);
+        if (networkShop) {
+          this.submitNetworkCommand(game, {
+            type: 'ready',
+            phaseRevision: this.networkPhase?.phaseRevision ?? this.networkPhaseRevision,
+            slot: game.localPlayerSlot,
+            ready: !localReady,
+          });
+          playSfx('click');
+        } else {
+          continueToNextWave(game);
+        }
       };
+    }
+    if (networkShop) {
+      ctx.fillStyle = ready[game.localPlayerSlot === 0 ? 1 : 0] ? '#8dff9a' : '#8a8aa6';
+      ctx.font = '11px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(
+        ready[game.localPlayerSlot === 0 ? 1 : 0] ? tt('coop.ready') : tt('coop.waitDecision'),
+        btnLeft + 350,
+        by - 10,
+        260,
+      );
     }
 
     this.renderStatsPanel(game, ctx, w - PANEL_W - 20, h, ui);
@@ -622,7 +975,7 @@ class ShopScene implements Scene {
   }
 
   private renderWeaponTooltip(game: Game, ctx: CanvasRenderingContext2D, d: WeaponDef, w: number, h: number, ui: UiInput): void {
-    const p = game.state.player;
+    const p = game.localPlayer;
     const dmgMult = 1 + p.stats.damagePct / 100;
     const aspd = 1 + p.stats.attackSpeedPct / 100;
     const dmg = Math.round(d.damage * dmgMult);
@@ -729,7 +1082,7 @@ class ShopScene implements Scene {
   }
 
   private renderStatsPanel(game: Game, ctx: CanvasRenderingContext2D, x: number, h: number, ui: UiInput): void {
-    const p = game.state.player;
+    const p = game.localPlayer;
     const pw = PANEL_W;
     const sets = activeSetBonuses(p.weapons.map((wi) => wi.def.id));
     const ph = this.statsPanelHeight(game);
@@ -756,7 +1109,7 @@ class ShopScene implements Scene {
     ctx.fillText(tn('c', p.character.id, p.character.name), x + 80, y + 30);
     ctx.fillStyle = '#9a9ab4';
     ctx.font = '13px system-ui, sans-serif';
-    ctx.fillText(tt('shop.level', p.level), x + 80, y + 52);
+    ctx.fillText(tt('shop.level', game.state.squad.level), x + 80, y + 52);
     divider(y + 78);
 
     // stats: 2-column grid with accent-colored values

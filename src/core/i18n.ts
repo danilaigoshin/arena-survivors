@@ -16,9 +16,9 @@ export const LANGS: { code: Lang; native: string }[] = [
 const KEY = 'as_lang';
 
 function detect(): Lang {
-  const saved = localStorage.getItem(KEY) as Lang | null;
+  const saved = typeof localStorage === 'undefined' ? null : localStorage.getItem(KEY) as Lang | null;
   if (saved && LANGS.some((l) => l.code === saved)) return saved;
-  const sys = (navigator.language || 'en').toLowerCase().slice(0, 2);
+  const sys = (typeof navigator === 'undefined' ? 'en' : navigator.language || 'en').toLowerCase().slice(0, 2);
   const match = LANGS.find((l) => l.code === sys);
   return match ? match.code : 'en';
 }
@@ -31,7 +31,7 @@ export function getLang(): Lang {
 
 export function setLang(l: Lang): void {
   lang = l;
-  localStorage.setItem(KEY, l);
+  if (typeof localStorage !== 'undefined') localStorage.setItem(KEY, l);
 }
 
 /** UI string by key; params replace {0}, {1}… Falls back ru → key. */

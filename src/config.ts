@@ -20,6 +20,8 @@ export const GRID_CELL = 64;
 export const ENEMY_SPAWN_INTERVAL_MULT = 1.12;
 export const ENEMY_MAX_ALIVE_MULT = 0.9;
 export const ENEMY_DAMAGE_MULT = 1.12;
+export const COOP_ENEMY_HP_MULT = 1.6;
+export const COOP_ENEMY_MAX_ALIVE_MULT = 1.5;
 /** Average materials per base drop on a kill and on wave-end cleanup. */
 export const ENEMY_MATERIAL_DROP_MULT = 0.43;
 export const WAVE_END_MATERIAL_DROP_MULT = 0.2;

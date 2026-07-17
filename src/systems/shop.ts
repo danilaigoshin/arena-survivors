@@ -1,8 +1,8 @@
 import { ITEMS, type ItemDef } from '../data/items';
 import { WEAPONS, MAX_TIER, type WeaponDef } from '../data/weapons';
 import { chance, pick, pickWeighted, rand } from '../core/rng';
-import { isUnlocked } from '../core/save';
 import type { Player } from '../entities/player';
+import type { SquadState } from '../multiplayer/types';
 
 export type ShopOffer =
   | { kind: 'weapon'; weapon: WeaponDef; price: number; sold: boolean }
@@ -29,8 +29,8 @@ function priceScale(wave: number): number {
 }
 
 /** Weapons available in the shop: not evolved, not meta-locked. */
-function weaponPool(player: Player): WeaponDef[] {
-  return WEAPONS.filter((w) => !w.evolved && player.canUseWeapon(w) && (!w.unlockCost || isUnlocked(w.id)));
+export function availableShopWeapons(player: Player): WeaponDef[] {
+  return WEAPONS.filter((w) => !w.evolved && player.canUseWeapon(w) && (!w.unlockCost || player.profile.isUnlocked(w.id)));
 }
 
 /** A duplicate purchase merges into a higher tier — price scales with the target tier. */
@@ -51,7 +51,7 @@ export function mergeTarget(offer: ShopOffer, player: Player): number {
 
 function rollOffer(wave: number, player: Player): ShopOffer {
   // only weapons the player can actually take: a free slot, or a mergeable duplicate
-  const takeable = weaponPool(player).filter(
+  const takeable = availableShopWeapons(player).filter(
     (w) => player.canAddWeapon() || player.weapons.some((o) => o.def.id === w.id && o.tier < MAX_TIER),
   );
   const wantWeapon = takeable.length > 0 && chance(0.45);
@@ -87,9 +87,9 @@ export function rollShop(wave: number, player: Player, prev?: ShopState): ShopSt
   };
 }
 
-export function reroll(shop: ShopState, wave: number, player: Player): boolean {
-  if (player.materials < shop.rerollCost) return false;
-  player.materials -= shop.rerollCost;
+export function reroll(shop: ShopState, wave: number, player: Player, squad: SquadState): boolean {
+  if (squad.materials < shop.rerollCost) return false;
+  squad.materials -= shop.rerollCost;
   shop.rerollCount++;
   const next = rollShop(wave, player);
   shop.offers = next.offers;

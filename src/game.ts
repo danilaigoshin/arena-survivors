@@ -10,6 +10,12 @@ import type { UiInput } from './render/ui';
 import type { CharacterDef } from './data/characters';
 import { measureViewport, type ViewportMetrics } from './core/viewport';
 import { renderRotatePrompt } from './render/ui';
+import { Player } from './entities/player';
+import { localPlayerProfile } from './core/playerProfile';
+import type { PlayerProfile, PlayerSlot, SessionRole } from './multiplayer/types';
+import { LocalInputProvider, RemoteInputProvider } from './systems/playerMovement';
+import type { PlayerInputState } from './multiplayer/types';
+import type { NetworkSession } from './multiplayer/session';
 
 export interface Scene {
   update(game: Game, dt: number): void;
@@ -31,6 +37,11 @@ export class Game {
   viewport: ViewportMetrics;
   camera = new Camera();
   state = new RunState();
+  localPlayerSlot: PlayerSlot = 0;
+  sessionRole: SessionRole = 'solo';
+  readonly localInput = new LocalInputProvider();
+  readonly remoteInput = new RemoteInputProvider();
+  networkSession: NetworkSession | null = null;
   scene!: Scene;
   ui: UiInput = { mx: 0, my: 0, clicked: false, down: false };
   fps = 0;
@@ -61,11 +72,14 @@ export class Game {
         ? WORLD_ZOOM * Math.max(2 / 3, Math.min(1, height / 420))
         : WORLD_ZOOM;
       this.camera.resize(width, height, zoom);
-      this.camera.follow(this.state.player.x, this.state.player.y);
+      this.camera.follow(this.localPlayer.x, this.localPlayer.y);
     };
     window.addEventListener('resize', resize);
     window.addEventListener('orientationchange', resize);
     window.visualViewport?.addEventListener('resize', resize);
+    document.addEventListener('visibilitychange', () => {
+      this.networkSession?.handleVisibility(this, document.hidden);
+    });
     resize();
   }
 
@@ -75,6 +89,14 @@ export class Game {
 
   get height(): number {
     return this.viewport.height;
+  }
+
+  get localPlayer(): Player {
+    return this.state.playerBySlot(this.localPlayerSlot) ?? this.state.players[0];
+  }
+
+  inputForSlot(slot: PlayerSlot, nowMs: number): PlayerInputState {
+    return slot === this.localPlayerSlot ? this.localInput.read(nowMs) : this.remoteInput.read(nowMs);
   }
 
   private prepareContext(): void {
@@ -100,12 +122,26 @@ export class Game {
 
   /** Fresh run: new state, chosen character with their starting weapon. */
   newRun(character: CharacterDef): void {
-    this.state = new RunState();
-    this.state.player.setCharacter(character);
-    this.state.player.weapons.push(new WeaponInstance(weaponById(character.weapon), 0));
-    this.state.player.recomputeStats();
+    this.sessionRole = 'solo';
+    this.localPlayerSlot = 0;
+    this.newRunSquad([character], [localPlayerProfile()]);
+  }
+
+  newRunSquad(characters: readonly CharacterDef[], profiles: readonly PlayerProfile[]): void {
+    if (characters.length < 1 || characters.length > 2 || profiles.length !== characters.length) {
+      throw new Error('newRunSquad requires matching character and profile lists for one or two players');
+    }
+    const players = characters.map((character, index) => {
+      const player = new Player(index as PlayerSlot, profiles[index]);
+      player.setCharacter(character);
+      player.weapons.push(new WeaponInstance(weaponById(character.weapon), 0));
+      player.recomputeStats();
+      return player;
+    });
+    this.localInput.reset();
+    this.state = new RunState(players);
     clearFx();
-    this.camera.follow(this.state.player.x, this.state.player.y);
+    this.camera.follow(this.localPlayer.x, this.localPlayer.y);
   }
 
   start(): void {
@@ -148,7 +184,16 @@ export class Game {
         renderRotatePrompt(this.ctx, this.width, this.height);
       } else {
         while (this.acc >= SIM_DT && steps < MAX_STEPS) {
-          this.scene.update(this, SIM_DT);
+          const session = this.networkSession;
+          session?.update(this, SIM_DT);
+          session?.beginPresentationCapture(
+            this.sessionRole === 'host' && this.scene.wantsJoystick === true,
+          );
+          try {
+            this.scene.update(this, SIM_DT);
+          } finally {
+            session?.endPresentationCapture();
+          }
           this.acc -= SIM_DT;
           steps++;
         }

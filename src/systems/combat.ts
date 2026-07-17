@@ -12,12 +12,26 @@ import { ENEMY_DAMAGE_MULT, ENEMY_MATERIAL_DROP_MULT, PLAYER_IFRAMES } from '../
 import { hitsObstacle } from '../data/maps';
 import type { AreaEffect } from '../entities/areaEffect';
 import { branchAttackSpeedMultiplier, branchDamageMultiplier } from '../data/weaponBranches';
+import type { Player } from '../entities/player';
+import type { PlayerSlot } from '../multiplayer/types';
+import { emitPresentationEvent } from '../multiplayer/presentationBus';
+import { applyEnemyRunScaling } from './enemyScaling';
 
 const dir = { x: 0, y: 0 };
 const chainHitIndices = new Int32Array(8);
 const clusterCandidates = new Int32Array(32);
 const DAMAGE_IGNORE_BLOCK = 1;
 const DAMAGE_QUIET = 2;
+
+export interface AttackSource {
+  ownerPlayerSlot: PlayerSlot | null;
+  x: number;
+  y: number;
+}
+
+export function playerAttackSource(player: Player, x = player.x, y = player.y): AttackSource {
+  return { ownerPlayerSlot: player.slot, x, y };
+}
 
 const GOO_COLORS: Record<string, string> = {
   chaser: '#4d7c42',
@@ -39,12 +53,20 @@ export function damageEnemy(
   kbX: number,
   kbY: number,
   sparkColor = '#ffe9a0',
-  attackerX = state.player.x,
-  attackerY = state.player.y,
+  attackerX = e.x,
+  attackerY = e.y,
   flags = 0,
+  source?: AttackSource,
 ): void {
   if (!e.active || e.hp <= 0) return;
-  rawDmg *= state.player.talentDamageMultiplier(e.hp / Math.max(1, e.maxHp), e.isBoss);
+  const owner = source?.ownerPlayerSlot === null || source === undefined
+    ? null
+    : state.playerBySlot(source.ownerPlayerSlot);
+  if (source) {
+    attackerX = source.x;
+    attackerY = source.y;
+  }
+  if (owner) rawDmg *= owner.talentDamageMultiplier(e.hp / Math.max(1, e.maxHp), e.isBoss);
   let dmgMul = crit ? 2 : 1;
   // shieldbearer blocks most damage arriving from the front (he faces the player)
   if (e.def.frontBlock && (flags & DAMAGE_IGNORE_BLOCK) === 0) {
@@ -64,6 +86,15 @@ export function damageEnemy(
     e.knockY += kbY;
   }
   spawnDamageNumber(e.x, e.y - e.radius, dmg, crit);
+  emitPresentationEvent({
+    type: 'damage',
+    target: 'enemy',
+    targetUid: e.uid,
+    x: e.x,
+    y: e.y - e.radius,
+    damage: dmg,
+    crit,
+  });
   const hitAngle = Math.atan2(kbY, kbX);
   if ((flags & DAMAGE_QUIET) === 0) {
     spawnSparks(e.x, e.y, hitAngle, crit ? '#ffd23e' : sparkColor, crit ? 4 : 2);
@@ -85,17 +116,27 @@ export function damageEnemy(
         if (!m) break;
         const idx = ENEMY_INDEX[e.def.splits.id];
         m.init(idx, e.x + (i === 0 ? -18 : 18), e.y + (Math.random() - 0.5) * 16, state.wave);
-        m.maxHp = Math.round(m.maxHp * state.difficulty.hpMult);
-        m.hp = m.maxHp;
+        applyEnemyRunScaling(state, m);
         m.spawnT = 0.2;
       }
     }
     // bombers leave a telegraphed explosion behind
     if (e.def.explodes) {
-      state.explosions.push({ x: e.x, y: e.y, t: 0.8, radius: 95, damage: e.contactDamage * 2 });
+      state.explosions.push(state.createExplosion(e.x, e.y, 0.8, 95, e.contactDamage * 2));
     }
     // death juice: white pop + palette gibs scaled to the victim, permanent goo
-    spawnDeathPop(e.def.id, e.x, e.y, e.radius * 2.3, state.player.x < e.x);
+    emitPresentationEvent({
+      type: 'death',
+      enemyId: e.def.id,
+      x: e.x,
+      y: e.y,
+      radius: e.radius,
+      hitAngle,
+      flip: attackerX < e.x,
+      boss: e.isBoss,
+      color: GOO_COLORS[e.def.id] ?? '#333',
+    });
+    spawnDeathPop(e.def.id, e.x, e.y, e.radius * 2.3, attackerX < e.x);
     if (e.isBoss) {
       spawnGibs(e.x, e.y, e.def.id, 26, hitAngle);
       spawnRing(e.x, e.y, '#ffffff');
@@ -119,11 +160,19 @@ export function damageEnemy(
   }
 }
 
-export function applyWeaponStatus(e: Enemy, status: WeaponStatusDef | undefined, damageScale = 1): void {
+export function applyWeaponStatus(
+  e: Enemy,
+  status: WeaponStatusDef | undefined,
+  damageScale = 1,
+  ownerPlayerSlot: PlayerSlot | null = null,
+): void {
   if (!status || !e.active || e.hp <= 0) return;
   if (status.burnDps && status.burnDuration) {
     const dps = status.burnDps * damageScale;
-    if (dps >= e.burnDps || e.burnT <= 0) e.burnDps = dps;
+    if (dps >= e.burnDps || e.burnT <= 0) {
+      e.burnDps = dps;
+      e.burnOwnerPlayerSlot = ownerPlayerSlot;
+    }
     e.burnT = Math.max(e.burnT, status.burnDuration);
     if (e.burnTick <= 0) e.burnTick = 0.25;
   }
@@ -153,14 +202,28 @@ export function updateEnemyStatuses(state: RunState, dt: number): void {
     e.burnTick -= dt;
     if (e.burnTick <= 0) {
       e.burnTick += 0.25;
-      damageEnemy(state, e, e.burnDps * 0.25, false, 0, 0, '#ff9a45', e.x, e.y, DAMAGE_IGNORE_BLOCK | DAMAGE_QUIET);
+      damageEnemy(
+        state,
+        e,
+        e.burnDps * 0.25,
+        false,
+        0,
+        0,
+        '#ff9a45',
+        e.x,
+        e.y,
+        DAMAGE_IGNORE_BLOCK | DAMAGE_QUIET,
+        { ownerPlayerSlot: e.burnOwnerPlayerSlot, x: e.x, y: e.y },
+      );
     }
-    if (e.burnT <= 0) e.burnDps = 0;
+    if (e.burnT <= 0) {
+      e.burnDps = 0;
+      e.burnOwnerPlayerSlot = null;
+    }
   }
 }
 
-export function damagePlayer(state: RunState, rawDmg: number): void {
-  const p = state.player;
+export function damagePlayer(state: RunState, p: Player, rawDmg: number): void {
   if (p.iframes > 0 || p.hp <= 0) return;
   if (p.tryBlockWithBarrier()) {
     p.iframes = 0.2;
@@ -179,13 +242,31 @@ export function damagePlayer(state: RunState, rawDmg: number): void {
   p.momentumT = 0;
   p.iframes = PLAYER_IFRAMES;
   spawnDamageNumber(p.x, p.y - p.radius - 6, dmg);
-  flashScreen();
-  addShake(7);
+  emitPresentationEvent({
+    type: 'damage',
+    target: 'player',
+    targetSlot: p.slot,
+    x: p.x,
+    y: p.y - p.radius - 6,
+    damage: dmg,
+    crit: false,
+  });
+  // The authoritative browser is always P1. P2 receives the same damage event
+  // and applies local-only camera feedback in the guest presentation layer.
+  if (p.slot === 0) {
+    flashScreen();
+    addShake(7);
+  }
   playSfx('hurt');
+  if (p.hp <= 0) {
+    p.hp = 0;
+    p.downed = true;
+    p.moving = false;
+  }
 }
 
-function critRoll(state: RunState): boolean {
-  return chance(state.player.stats.critChance);
+function critRoll(player: Player): boolean {
+  return chance(player.stats.critChance);
 }
 
 function wasHitByChain(index: number, count: number): boolean {
@@ -195,13 +276,13 @@ function wasHitByChain(index: number, count: number): boolean {
   return false;
 }
 
-function castChainLightning(state: RunState, w: WeaponInstance, firstTargetIdx: number, rawDamage: number): void {
+function castChainLightning(state: RunState, player: Player, w: WeaponInstance, firstTargetIdx: number, rawDamage: number): void {
   const def = w.def;
   const chain = def.chain!;
   const maxTargets = Math.min(weaponChainTargetCount(w), chainHitIndices.length, w.chainFxX.length - 1);
   const sparkColor = def.id === 'thunderstaff' ? '#8be9fd' : '#b18cff';
-  let sourceX = state.player.x + Math.cos(w.fireAngle) * 28;
-  let sourceY = state.player.y + Math.sin(w.fireAngle) * 28 + 3;
+  let sourceX = player.x + Math.cos(w.fireAngle) * 28;
+  let sourceY = player.y + Math.sin(w.fireAngle) * 28 + 3;
   let targetIdx = firstTargetIdx;
   let hitCount = 0;
 
@@ -218,7 +299,19 @@ function castChainLightning(state: RunState, w: WeaponInstance, firstTargetIdx: 
 
     norm(e.x - sourceX, e.y - sourceY, dir);
     const damage = rawDamage * Math.pow(chain.falloff, hitCount);
-    damageEnemy(state, e, damage, critRoll(state), dir.x * 80, dir.y * 80, sparkColor, sourceX, sourceY);
+    damageEnemy(
+      state,
+      e,
+      damage,
+      critRoll(player),
+      dir.x * 80,
+      dir.y * 80,
+      sparkColor,
+      sourceX,
+      sourceY,
+      0,
+      playerAttackSource(player, sourceX, sourceY),
+    );
     sourceX = e.x;
     sourceY = e.y;
     hitCount++;
@@ -256,7 +349,10 @@ function setAreaStatus(area: AreaEffect, status: WeaponStatusDef | undefined, da
 
 function applyAreaStatus(e: Enemy, area: AreaEffect): void {
   if (area.burnDps > 0 && area.burnDuration > 0) {
-    if (area.burnDps >= e.burnDps || e.burnT <= 0) e.burnDps = area.burnDps;
+    if (area.burnDps >= e.burnDps || e.burnT <= 0) {
+      e.burnDps = area.burnDps;
+      e.burnOwnerPlayerSlot = area.ownerPlayerSlot;
+    }
     e.burnT = Math.max(e.burnT, area.burnDuration);
     if (e.burnTick <= 0) e.burnTick = 0.25;
   }
@@ -267,10 +363,10 @@ function applyAreaStatus(e: Enemy, area: AreaEffect): void {
   if (area.freezeDuration > 0) e.freezeT = Math.max(e.freezeT, area.freezeDuration);
 }
 
-function findClusterTarget(state: RunState, def: WeaponDef, fallbackIdx: number): number {
+function findClusterTarget(state: RunState, player: Player, def: WeaponDef, fallbackIdx: number): number {
   const radius = def.zone?.radius ?? 100;
   let count = 0;
-  state.grid.queryCircle(state.player.x, state.player.y, def.range, (i) => {
+  state.grid.queryCircle(player.x, player.y, def.range, (i) => {
     if (count >= clusterCandidates.length) return;
     const e = state.enemies.items[i];
     if (e.active && e.hp > 0) clusterCandidates[count++] = i;
@@ -292,10 +388,10 @@ function findClusterTarget(state: RunState, def: WeaponDef, fallbackIdx: number)
   return bestIdx;
 }
 
-function spawnWeaponZones(state: RunState, w: WeaponInstance, targetIdx: number, rawDamage: number, statusScale: number): void {
+function spawnWeaponZones(state: RunState, player: Player, w: WeaponInstance, targetIdx: number, rawDamage: number, statusScale: number): void {
   const def = w.def;
   const zone = def.zone!;
-  const chosenIdx = zone.target === 'cluster' ? findClusterTarget(state, def, targetIdx) : targetIdx;
+  const chosenIdx = zone.target === 'cluster' ? findClusterTarget(state, player, def, targetIdx) : targetIdx;
   const target = state.enemies.items[chosenIdx];
   const count = zone.count ?? 1;
   for (let i = 0; i < count; i++) {
@@ -317,20 +413,29 @@ function spawnWeaponZones(state: RunState, w: WeaponInstance, targetIdx: number,
       rawDamage * zone.tickDamageScale,
       rawDamage * zone.impactDamageScale,
       zone.pull ?? 0,
+      player.slot,
     );
     setAreaStatus(area, zone.status, statusScale);
   }
 }
 
-function spawnShockwave(state: RunState, def: WeaponDef, rawDamage: number): void {
+function spawnShockwave(state: RunState, player: Player, def: WeaponDef, rawDamage: number): void {
   const shock = def.melee!.shockwave!;
   const area = allocArea(state);
-  area.initShockwave(def.id, state.player.x, state.player.y, def.range, shock.maxRadius, shock.speed, rawDamage * shock.damageScale);
+  area.initShockwave(def.id, player.x, player.y, def.range, shock.maxRadius, shock.speed, rawDamage * shock.damageScale, player.slot);
 }
 
-export function spawnTrailZone(state: RunState, style: string, x: number, y: number, burnDps: number, duration: number): void {
+export function spawnTrailZone(
+  state: RunState,
+  style: string,
+  x: number,
+  y: number,
+  burnDps: number,
+  duration: number,
+  ownerPlayerSlot: PlayerSlot | null = null,
+): void {
   const area = allocArea(state);
-  area.initZone(style, -1, x, y, 0, duration, 26, 26, 0.5, 0, 0, 0);
+  area.initZone(style, -1, x, y, 0, duration, 26, 26, 0.5, 0, 0, 0, ownerPlayerSlot);
   area.burnDps = burnDps;
   area.burnDuration = 0.75;
 }
@@ -342,7 +447,21 @@ function hitAreaEnemies(state: RunState, area: AreaEffect, radius: number, rawDa
     const rr = radius + e.radius;
     if (dist2(area.x, area.y, e.x, e.y) > rr * rr) return;
     norm(e.x - area.x, e.y - area.y, dir);
-    if (rawDamage > 0) damageEnemy(state, e, rawDamage, false, dir.x * 80, dir.y * 80, area.style === 'absolute_zero' ? '#8be9fd' : '#b18cff', area.x, area.y, quiet ? DAMAGE_QUIET | DAMAGE_IGNORE_BLOCK : 0);
+    if (rawDamage > 0) {
+      damageEnemy(
+        state,
+        e,
+        rawDamage,
+        false,
+        dir.x * 80,
+        dir.y * 80,
+        area.style === 'absolute_zero' ? '#8be9fd' : '#b18cff',
+        area.x,
+        area.y,
+        quiet ? DAMAGE_QUIET | DAMAGE_IGNORE_BLOCK : 0,
+        { ownerPlayerSlot: area.ownerPlayerSlot, x: area.x, y: area.y },
+      );
+    }
     applyAreaStatus(e, area);
   });
 }
@@ -361,7 +480,20 @@ export function updateAreaEffects(state: RunState, dt: number): void {
         if (d + e.radius < area.prevRadius || d - e.radius > area.radius) return;
         e.lastShockwaveUid = area.uid;
         norm(e.x - area.x, e.y - area.y, dir);
-        damageEnemy(state, e, area.damage, critRoll(state), dir.x * 520, dir.y * 520, '#ffd23e', area.x, area.y);
+        const owner = area.ownerPlayerSlot === null ? null : state.playerBySlot(area.ownerPlayerSlot);
+        damageEnemy(
+          state,
+          e,
+          area.damage,
+          owner ? critRoll(owner) : false,
+          dir.x * 520,
+          dir.y * 520,
+          '#ffd23e',
+          area.x,
+          area.y,
+          0,
+          { ownerPlayerSlot: area.ownerPlayerSlot, x: area.x, y: area.y },
+        );
       });
       if (area.ttl <= 0 || area.radius >= area.maxRadius) state.areaEffects.free(i);
       continue;
@@ -399,15 +531,23 @@ export function updateAreaEffects(state: RunState, dt: number): void {
   }
 }
 
-function updateSummons(state: RunState, w: WeaponInstance, dt: number, rawDamage: number, baseSpeedMult: number, abilitySpeedMult: number): void {
+function updateSummons(
+  state: RunState,
+  player: Player,
+  w: WeaponInstance,
+  dt: number,
+  rawDamage: number,
+  baseSpeedMult: number,
+  abilitySpeedMult: number,
+): void {
   const summon = w.def.summon!;
   const count = Math.min(summon.count, w.summonX.length);
   let spawned = false;
   while (w.summonCount < count) {
     const i = w.summonCount++;
     const a = (i / count) * Math.PI * 2;
-    w.summonX[i] = state.player.x + Math.cos(a) * 48;
-    w.summonY[i] = state.player.y + Math.sin(a) * 48;
+    w.summonX[i] = player.x + Math.cos(a) * 48;
+    w.summonY[i] = player.y + Math.sin(a) * 48;
     w.summonHitCd[i] = i * 0.08;
     spawned = true;
   }
@@ -418,14 +558,14 @@ function updateSummons(state: RunState, w: WeaponInstance, dt: number, rawDamage
     w.summonFlash[i] = Math.max(0, w.summonFlash[i] - dt);
     const targetIdx = state.grid.nearest(w.summonX[i], w.summonY[i], summon.leashRange);
     const target = targetIdx >= 0 ? state.enemies.items[targetIdx] : null;
-    let tx = state.player.x + Math.cos(w.orbitAngle + i * Math.PI * 0.5) * (46 + i * 4);
-    let ty = state.player.y + Math.sin(w.orbitAngle + i * Math.PI * 0.5) * (46 + i * 4);
+    let tx = player.x + Math.cos(w.orbitAngle + i * Math.PI * 0.5) * (46 + i * 4);
+    let ty = player.y + Math.sin(w.orbitAngle + i * Math.PI * 0.5) * (46 + i * 4);
     if (target?.active && target.hp > 0) {
       tx = target.x;
       ty = target.y;
     }
     norm(tx - w.summonX[i], ty - w.summonY[i], dir);
-    const distToPlayer = Math.sqrt(dist2(w.summonX[i], w.summonY[i], state.player.x, state.player.y));
+    const distToPlayer = Math.sqrt(dist2(w.summonX[i], w.summonY[i], player.x, player.y));
     const moveSpeed = summon.speed * (distToPlayer > summon.leashRange ? 2 : 1);
     w.summonX[i] += dir.x * moveSpeed * dt;
     w.summonY[i] += dir.y * moveSpeed * dt;
@@ -433,7 +573,19 @@ function updateSummons(state: RunState, w: WeaponInstance, dt: number, rawDamage
       const rr = target.radius + 12;
       if (dist2(w.summonX[i], w.summonY[i], target.x, target.y) <= rr * rr) {
         norm(target.x - w.summonX[i], target.y - w.summonY[i], dir);
-        damageEnemy(state, target, rawDamage, critRoll(state), dir.x * 100, dir.y * 100, '#b18cff', w.summonX[i], w.summonY[i]);
+        damageEnemy(
+          state,
+          target,
+          rawDamage,
+          critRoll(player),
+          dir.x * 100,
+          dir.y * 100,
+          '#b18cff',
+          w.summonX[i],
+          w.summonY[i],
+          0,
+          playerAttackSource(player, w.summonX[i], w.summonY[i]),
+        );
         w.summonHitCd[i] = summon.hitCooldown / baseSpeedMult;
         w.summonFlash[i] = 0.12;
       }
@@ -442,12 +594,12 @@ function updateSummons(state: RunState, w: WeaponInstance, dt: number, rawDamage
 }
 
 export function updateWeapons(state: RunState, dt: number): void {
-  const p = state.player;
+  state.hitStopCd = Math.max(0, state.hitStopCd - dt);
+  for (const p of state.alivePlayers()) {
   const baseDmgMult = 1 + p.stats.damagePct / 100;
   const baseSpeedMult = 1 + p.stats.attackSpeedPct / 100;
   const talentSpeedMult = p.talentAttackSpeedMultiplier();
 
-  state.hitStopCd = Math.max(0, state.hitStopCd - dt);
   for (const w of p.weapons) {
     const def = w.def;
     const dmgMult = baseDmgMult * p.abilityDamageMultiplier(def.id) * branchDamageMultiplier(w.branch);
@@ -461,7 +613,7 @@ export function updateWeapons(state: RunState, dt: number): void {
 
     if (def.behavior === 'summon' && def.summon) {
       w.orbitAngle += dt * 1.8;
-      updateSummons(state, w, dt, def.damage * dmgMult * tierDmg, permanentSpeedMult, temporarySpeedMult);
+      updateSummons(state, p, w, dt, def.damage * dmgMult * tierDmg, permanentSpeedMult, temporarySpeedMult);
       continue;
     }
 
@@ -485,7 +637,19 @@ export function updateWeapons(state: RunState, dt: number): void {
           if (dist2(e.x, e.y, ox, oy) > rr * rr) return;
           w.hitCooldowns.set(e.uid, def.orbit!.hitCooldown / branchAttackSpeedMultiplier(w.branch));
           norm(e.x - p.x, e.y - p.y, dir);
-          damageEnemy(state, e, def.damage * dmgMult * tierDmg, critRoll(state), dir.x * 160, dir.y * 160);
+          damageEnemy(
+            state,
+            e,
+            def.damage * dmgMult * tierDmg,
+            critRoll(p),
+            dir.x * 160,
+            dir.y * 160,
+            undefined,
+            p.x,
+            p.y,
+            0,
+            playerAttackSource(p),
+          );
         });
       }
       continue;
@@ -527,8 +691,10 @@ export function updateWeapons(state: RunState, dt: number): void {
           def.projectile.pierce,
           def.range / def.projectile.speed + 0.1,
           true,
-          critRoll(state),
+          critRoll(p),
           def.id,
+          0,
+          p.slot,
         );
         projectile.remainingBounces = def.projectile.ricochet?.bounces ?? 0;
         if (def.projectile.ricochet) {
@@ -542,7 +708,7 @@ export function updateWeapons(state: RunState, dt: number): void {
       }
     } else if (def.behavior === 'chain' && def.chain) {
       playSfx('magic');
-      castChainLightning(state, w, targetIdx, def.damage * dmgMult * tierDmg);
+      castChainLightning(state, p, w, targetIdx, def.damage * dmgMult * tierDmg);
     } else if (def.behavior === 'pulse' && def.pulse) {
       playSfx('ice');
       spawnRing(p.x, p.y, def.id === 'absolute_zero' ? '#8be9fd' : '#bfe8ff');
@@ -552,12 +718,24 @@ export function updateWeapons(state: RunState, dt: number): void {
         const rr = def.pulse!.radius + e.radius;
         if (dist2(p.x, p.y, e.x, e.y) > rr * rr) return;
         norm(e.x - p.x, e.y - p.y, dir);
-        damageEnemy(state, e, def.damage * dmgMult * tierDmg, critRoll(state), dir.x * 120, dir.y * 120, '#8be9fd');
-        applyWeaponStatus(e, def.pulse!.status, dmgMult * tierDmg);
+        damageEnemy(
+          state,
+          e,
+          def.damage * dmgMult * tierDmg,
+          critRoll(p),
+          dir.x * 120,
+          dir.y * 120,
+          '#8be9fd',
+          p.x,
+          p.y,
+          0,
+          playerAttackSource(p),
+        );
+        applyWeaponStatus(e, def.pulse!.status, dmgMult * tierDmg, p.slot);
       });
     } else if (def.behavior === 'zone' && def.zone) {
       playSfx(def.id === 'armageddon' ? 'fire' : 'magic');
-      spawnWeaponZones(state, w, targetIdx, def.damage * dmgMult * tierDmg, dmgMult * tierDmg);
+      spawnWeaponZones(state, p, w, targetIdx, def.damage * dmgMult * tierDmg, dmgMult * tierDmg);
     } else if (def.behavior === 'melee' && def.melee) {
       playSfx(def.melee.shape === 'slam' ? 'heavy' : 'shoot');
       w.swipeTimer = 0.18;
@@ -594,17 +772,43 @@ export function updateWeapons(state: RunState, dt: number): void {
         norm(e.x - p.x, e.y - p.y, dir);
         const strikes = melee.strikes ?? 1;
         for (let strike = 0; strike < strikes; strike++) {
-          damageEnemy(state, e, def.damage * dmgMult * tierDmg, critRoll(state), dir.x * melee.knockback, dir.y * melee.knockback);
+          damageEnemy(
+            state,
+            e,
+            def.damage * dmgMult * tierDmg,
+            critRoll(p),
+            dir.x * melee.knockback,
+            dir.y * melee.knockback,
+            undefined,
+            p.x,
+            p.y,
+            0,
+            playerAttackSource(p),
+          );
         }
       });
-      if (melee.shockwave) spawnShockwave(state, def, def.damage * dmgMult * tierDmg);
+      if (melee.shockwave) spawnShockwave(state, p, def, def.damage * dmgMult * tierDmg);
       if (melee.phantom) {
         const ph = melee.phantom;
         for (let n = 0; n < ph.count; n++) {
           const a = angle + ((n / Math.max(1, ph.count - 1)) - 0.5) * ph.spreadRad * 2;
-          state.spawnProjectile(p.x, p.y, Math.cos(a) * ph.speed, Math.sin(a) * ph.speed, def.damage * dmgMult * tierDmg * ph.damageScale, 0, ph.range / ph.speed + 0.1, true, critRoll(state), def.id, 2);
+          state.spawnProjectile(
+            p.x,
+            p.y,
+            Math.cos(a) * ph.speed,
+            Math.sin(a) * ph.speed,
+            def.damage * dmgMult * tierDmg * ph.damageScale,
+            0,
+            ph.range / ph.speed + 0.1,
+            true,
+            critRoll(p),
+            def.id,
+            2,
+            p.slot,
+          );
         }
       }
     }
+  }
   }
 }

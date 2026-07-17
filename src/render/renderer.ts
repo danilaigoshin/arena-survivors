@@ -7,6 +7,7 @@ import { weaponIcon } from './icons';
 import { shakeOffsetX, shakeOffsetY, kickOffsetX, kickOffsetY } from './fx';
 import { drawFx } from './fx';
 import { drawLiveDecor } from './floor';
+import type { Player } from '../entities/player';
 
 const CHAIN_FX_DUR = 0.14;
 
@@ -128,8 +129,7 @@ function drawWeaponAreas(ctx: CanvasRenderingContext2D, state: RunState, time: n
   }
 }
 
-function drawCharacterAbility(ctx: CanvasRenderingContext2D, state: RunState, time: number): void {
-  const p = state.player;
+function drawCharacterAbility(ctx: CanvasRenderingContext2D, p: Player, time: number): void {
   const id = p.character.ability.id;
   if (id === 'arcane_circle' && p.abilityActiveT > 0) {
     const radius = p.arcaneCircleRadius();
@@ -231,8 +231,8 @@ function drawWaveObjective(ctx: CanvasRenderingContext2D, state: RunState, time:
   ctx.restore();
 }
 
-function drawSummons(ctx: CanvasRenderingContext2D, state: RunState, time: number): void {
-  for (const w of state.player.weapons) {
+function drawSummons(ctx: CanvasRenderingContext2D, player: Player, time: number): void {
+  for (const w of player.weapons) {
     if (!w.def.summon) continue;
     const evolved = w.def.id === 'soul_legion';
     for (let i = 0; i < w.summonCount; i++) {
@@ -378,7 +378,7 @@ export function renderWorld(ctx: CanvasRenderingContext2D, state: RunState, cam:
   }
 
   drawWeaponAreas(ctx, state, time);
-  drawCharacterAbility(ctx, state, time);
+  for (const player of state.players) drawCharacterAbility(ctx, player, time);
 
   // battlefield chests: bobbing with a golden pulse
   for (const c of state.chests) {
@@ -391,14 +391,14 @@ export function renderWorld(ctx: CanvasRenderingContext2D, state: RunState, cam:
     ctx.restore();
   }
 
-  const p = state.player;
-
   // shadows first (under everything that walks)
   for (let i = 0; i < state.enemies.count; i++) {
     const e = state.enemies.items[i];
     if (e.active) drawShadow(ctx, e.x, e.y + e.radius * 0.9, e.radius * 1.7);
   }
-  drawShadow(ctx, p.x, p.y + p.radius * 0.95, p.radius * 1.8);
+  for (const player of state.players) {
+    drawShadow(ctx, player.x, player.y + player.radius * 0.95, player.radius * 1.8);
+  }
 
   // enemies
   for (let i = 0; i < state.enemies.count; i++) {
@@ -428,10 +428,11 @@ export function renderWorld(ctx: CanvasRenderingContext2D, state: RunState, cam:
       ctx.ellipse(e.x, e.y + e.radius * 0.9, e.radius * 1.1 * pulse, e.radius * 0.45 * pulse, 0, 0, Math.PI * 2);
       ctx.stroke();
     }
+    const target = state.nearestAlivePlayer(e.x, e.y);
     drawSprite(ctx, e.def.id, e.x, e.y, size, {
       white,
       squash,
-      flip: p.x < e.x,
+      flip: target ? target.x < e.x : false,
       frame,
       scale: 0.2 + spawnK * 0.8,
       alpha: e.spawnT > 0 ? spawnK : undefined,
@@ -469,7 +470,8 @@ export function renderWorld(ctx: CanvasRenderingContext2D, state: RunState, cam:
     }
   }
 
-  drawHolsteredWeapons(ctx, state, time);
+  for (const p of state.players) {
+  drawHolsteredWeapons(ctx, p, time);
 
   // player (blinks briefly after taking damage)
   const playerFlip = Math.abs(p.aimAngle) > Math.PI / 2;
@@ -477,12 +479,23 @@ export function renderWorld(ctx: CanvasRenderingContext2D, state: RunState, cam:
     const squash = p.moving ? Math.sin(time * 12) * 0.05 : Math.sin(time * 3) * 0.03;
     const frame = p.moving ? 1 + (Math.floor(time * 10) % Math.max(1, frameCount(p.character.sprite) - 1)) : 0;
     const rotate = p.character.ability.id === 'whirlwind' && p.abilityActiveT > 0 ? time * 12 : undefined;
+    ctx.save();
+    ctx.globalAlpha = p.downed ? 0.35 : 1;
     drawSprite(ctx, p.character.sprite, p.x, p.y, p.radius * 2.6, { squash, flip: playerFlip, frame, rotate });
+    ctx.restore();
   }
 
-  drawSecondHand(ctx, state, time);
-  drawHeldWeapon(ctx, state, time);
-  drawSummons(ctx, state, time);
+  if (!p.downed) {
+    drawSecondHand(ctx, p, time);
+    drawHeldWeapon(ctx, p, time);
+    drawSummons(ctx, p, time);
+  }
+  ctx.save();
+  ctx.fillStyle = p.slot === 0 ? '#8be9fd' : '#ffd23e';
+  ctx.font = 'bold 10px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(`P${p.slot + 1}`, p.x, p.y - p.radius - 10);
+  ctx.restore();
 
   // weapon visuals: chain lightning, melee swipes + orbit orbs
   for (const w of p.weapons) {
@@ -558,6 +571,7 @@ export function renderWorld(ctx: CanvasRenderingContext2D, state: RunState, cam:
         ctx.restore();
       }
     }
+  }
   }
 
   // projectiles: friendly = per-weapon styled tracer, enemy = pulsing orb
@@ -719,7 +733,7 @@ const HELD_SPRITES: Record<string, string> = {
 };
 
 /** Player's weapons that have a held sprite, in slot order. */
-function heldWeapons(p: RunState['player']): WeaponInstance[] {
+function heldWeapons(p: Player): WeaponInstance[] {
   return p.weapons.filter((wi) => HELD_SPRITES[wi.def.id]);
 }
 
@@ -751,8 +765,7 @@ function drawMuzzleFlash(ctx: CanvasRenderingContext2D, img: HTMLCanvasElement, 
 }
 
 /** 3rd and 4th held-sprite weapons ride holstered on the hips, behind the body. */
-function drawHolsteredWeapons(ctx: CanvasRenderingContext2D, state: RunState, time: number): void {
-  const p = state.player;
+function drawHolsteredWeapons(ctx: CanvasRenderingContext2D, p: Player, time: number): void {
   const held = heldWeapons(p);
   for (let i = 2; i < Math.min(4, held.length); i++) {
     const side = i === 2 ? -1 : 1;
@@ -768,8 +781,7 @@ function drawHolsteredWeapons(ctx: CanvasRenderingContext2D, state: RunState, ti
 }
 
 /** Second hand: fully alive — aims at ITS OWN last target, with recoil and muzzle flash. */
-function drawSecondHand(ctx: CanvasRenderingContext2D, state: RunState, time: number): void {
-  const p = state.player;
+function drawSecondHand(ctx: CanvasRenderingContext2D, p: Player, time: number): void {
   const held = heldWeapons(p);
   const w = held[1];
   if (!w) return;
@@ -793,8 +805,7 @@ function drawSecondHand(ctx: CanvasRenderingContext2D, state: RunState, time: nu
 }
 
 /** Draws the player's held weapon aimed at the current target, with recoil kick and muzzle flash. */
-function drawHeldWeapon(ctx: CanvasRenderingContext2D, state: RunState, time: number): void {
-  const p = state.player;
+function drawHeldWeapon(ctx: CanvasRenderingContext2D, p: Player, time: number): void {
   const w = heldWeapons(p)[0];
   if (!w) return;
   const sprite = HELD_SPRITES[w.def.id];

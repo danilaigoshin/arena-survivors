@@ -5,6 +5,8 @@ import { pushOutOfObstacles } from '../data/maps';
 import { ENEMY_INDEX } from '../data/enemies';
 import { enemyMoveMultiplier } from './combat';
 import { getEndlessWaveScaling, type EndlessWaveScaling } from '../data/endless';
+import type { Player } from '../entities/player';
+import { applyEnemyRunScaling } from './enemyScaling';
 
 const dir = { x: 0, y: 0 };
 
@@ -14,8 +16,7 @@ function bossSummon(state: RunState, e: import('../entities/enemy').Enemy, count
     if (!m) break;
     const a = (i / count) * Math.PI * 2;
     m.init(ENEMY_INDEX[i === 0 ? 'runner' : 'chaser'], e.x + Math.cos(a) * 90, e.y + Math.sin(a) * 90, state.wave, elites && i === 0);
-    m.maxHp = Math.round(m.maxHp * state.difficulty.hpMult);
-    m.hp = m.maxHp;
+    applyEnemyRunScaling(state, m);
   }
 }
 
@@ -37,8 +38,14 @@ function bossFire(state: RunState, e: import('../entities/enemy').Enemy, angle: 
  * Bosses share one state machine: chase → pick an attack from def.attacks.
  * Stages by remaining HP make everything denser and faster.
  */
-function bossUpdate(state: RunState, e: import('../entities/enemy').Enemy, dt: number, moveMult: number, endless: EndlessWaveScaling): void {
-  const p = state.player;
+function bossUpdate(
+  state: RunState,
+  e: import('../entities/enemy').Enemy,
+  p: Player,
+  dt: number,
+  moveMult: number,
+  endless: EndlessWaveScaling,
+): void {
   const def = e.def;
   const frac = e.hp / e.maxHp;
   // brute stays flat; bigger bosses escalate through 3 stages
@@ -84,7 +91,7 @@ function bossUpdate(state: RunState, e: import('../entities/enemy').Enemy, dt: n
     if (def.fireTrail && state.firePatches.length < 160) {
       const last = state.firePatches[state.firePatches.length - 1];
       if (!last || (last.x - e.x) ** 2 + (last.y - e.y) ** 2 > 26 * 26) {
-        state.firePatches.push({ x: e.x, y: e.y, ttl: 3.5 });
+        state.firePatches.push(state.createFirePatch(e.x, e.y, 3.5));
       }
     }
     if (e.phaseTimer <= 0) {
@@ -152,18 +159,19 @@ function bossUpdate(state: RunState, e: import('../entities/enemy').Enemy, dt: n
 }
 
 export function updateEnemies(state: RunState, dt: number): void {
-  const p = state.player;
   const endless = getEndlessWaveScaling(state.wave);
   for (let i = 0; i < state.enemies.count; i++) {
     const e = state.enemies.items[i];
     if (!e.active || e.hp <= 0) continue;
+    const p = state.nearestAlivePlayer(e.x, e.y);
+    if (!p) continue;
     const def = e.def;
     // Apply contract speed at movement time so spawned/split enemies and dash
     // phases receive the same modifier as enemies created by the main spawner.
     const moveMult = enemyMoveMultiplier(e) * (state.activeContract?.enemySpeedMult ?? 1);
 
     if (def.ai === 'boss') {
-      bossUpdate(state, e, dt, moveMult, endless);
+      bossUpdate(state, e, p, dt, moveMult, endless);
     } else if (def.ai === 'chargeDash') {
       // sprinter: approach, telegraph briefly, then lunge at the player
       e.phaseTimer -= dt;
@@ -228,8 +236,7 @@ export function updateEnemies(state: RunState, dt: number): void {
           if (!m) break;
           const a = (k / 3) * Math.PI * 2;
           m.init(ENEMY_INDEX['runner'], e.x + Math.cos(a) * 60, e.y + Math.sin(a) * 60, state.wave);
-          m.maxHp = Math.round(m.maxHp * state.difficulty.hpMult);
-          m.hp = m.maxHp;
+          applyEnemyRunScaling(state, m);
         }
       }
     } else if (def.ai === 'keepDistanceShoot' && def.shoot) {

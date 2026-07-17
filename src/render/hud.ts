@@ -12,9 +12,11 @@ import { displayFont } from './font';
 import type { ViewportMetrics } from '../core/viewport';
 import { branchAttackSpeedMultiplier } from '../data/weaponBranches';
 import { WAVE_OBJECTIVES } from '../data/objectives';
+import type { PlayerSlot } from '../multiplayer/types';
+import { xpToNext } from '../systems/squad';
 
-export function renderHud(ctx: CanvasRenderingContext2D, state: RunState, viewport: ViewportMetrics): void {
-  const p = state.player;
+export function renderHud(ctx: CanvasRenderingContext2D, state: RunState, viewport: ViewportMetrics, localPlayerSlot: PlayerSlot): void {
+  const p = state.playerBySlot(localPlayerSlot) ?? state.players[0];
   const hudScale = viewport.hudScale;
   const offsetX = viewport.safe.left;
   const offsetY = viewport.safe.top;
@@ -41,10 +43,10 @@ export function renderHud(ctx: CanvasRenderingContext2D, state: RunState, viewpo
   ctx.fillStyle = '#241a08';
   ctx.font = 'bold 12px system-ui, sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText(`${p.level}`, px + 58, py + 55);
+  ctx.fillText(`${state.squad.level}`, px + 58, py + 55);
   // bars
   bar(ctx, px + 74, py + 12, 180, 22, p.hp / p.stats.maxHp, ['#ff7080', '#c22b3d'], `${Math.ceil(Math.max(0, p.hp))} / ${p.stats.maxHp}`);
-  bar(ctx, px + 74, py + 42, 180, 12, p.xp / p.xpToNext(), ['#8dff9a', '#3fae57']);
+  bar(ctx, px + 74, py + 42, 180, 12, state.squad.xp / xpToNext(state.squad.level), ['#8dff9a', '#3fae57']);
 
   // ── top-center: wave + timer, plain text with a soft shadow (no panel) ──
   const waveDef = getWaveDef(state.wave);
@@ -74,11 +76,49 @@ export function renderHud(ctx: CanvasRenderingContext2D, state: RunState, viewpo
   ctx.fillStyle = '#8be9fd';
   ctx.font = displayFont(15);
   ctx.textAlign = 'left';
-  ctx.fillText(`${p.materials}`, viewW - mw + 24, 33);
+  ctx.fillText(`${state.squad.materials}`, viewW - mw + 24, 33);
   drawIcon(ctx, 'i_skull', viewW - mw + 8, 60, 15);
   ctx.fillStyle = '#ccccdd';
   ctx.font = 'bold 15px system-ui, sans-serif';
   ctx.fillText(`${state.kills}`, viewW - mw + 24, 61);
+
+  // ── co-op teammate: compact portrait, HP and ability state ──
+  const teammate = state.players.find((player) => player.slot !== localPlayerSlot);
+  if (teammate) {
+    const tw = 190;
+    const tx = viewW - tw - 14;
+    const ty = 86;
+    panel(ctx, tx, ty, tw, 50, {
+      radius: 11,
+      fill: '#14141edb',
+      border: teammate.downed ? '#ff547055' : teammate.slot === 0 ? '#8be9fd55' : '#ffd23e55',
+    });
+    drawSprite(ctx, teammate.character.sprite, tx + 25, ty + 25, 34);
+    ctx.fillStyle = teammate.downed ? '#ff7080' : teammate.slot === 0 ? '#8be9fd' : '#ffd23e';
+    ctx.font = 'bold 10px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(`P${teammate.slot + 1}`, tx + 25, ty + 43);
+    bar(
+      ctx,
+      tx + 48,
+      ty + 8,
+      132,
+      16,
+      teammate.hp / teammate.stats.maxHp,
+      ['#ff7080', '#c22b3d'],
+      teammate.downed ? t('coop.downed') : `${Math.ceil(Math.max(0, teammate.hp))}`,
+    );
+    const abilityReady = teammate.abilityCd <= 0;
+    ctx.textAlign = 'left';
+    ctx.fillStyle = abilityReady ? '#8dff9a' : '#9a9ab4';
+    ctx.font = '10px system-ui, sans-serif';
+    ctx.fillText(
+      abilityReady ? t('coop.ready') : `${Math.ceil(teammate.abilityCd)}s`,
+      tx + 50,
+      ty + 37,
+      126,
+    );
+  }
 
   // ── current optional objective and contract ──
   const objective = state.objective;
@@ -118,7 +158,7 @@ export function renderHud(ctx: CanvasRenderingContext2D, state: RunState, viewpo
   if (state.activeContract) {
     const contract = state.activeContract;
     const cw = 210;
-    const cy = 86;
+    const cy = teammate ? 144 : 86;
     panel(ctx, viewW - cw - 14, cy, cw, 42, { radius: 11, fill: '#1b1812dd', border: '#ffd23e55' });
     drawIcon(ctx, contract.icon, viewW - cw + 6, cy + 21, 18);
     ctx.textAlign = 'left';

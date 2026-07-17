@@ -1,3 +1,5 @@
+import type { PlayerSlot } from '../multiplayer/types';
+
 let nextAreaUid = 1;
 
 export class AreaEffect {
@@ -5,7 +7,8 @@ export class AreaEffect {
   uid = 0;
   kind: 'zone' | 'shockwave' = 'zone';
   style = '';
-  ownerSlot = 0;
+  weaponSlot = 0;
+  ownerPlayerSlot: PlayerSlot | null = null;
   x = 0;
   y = 0;
   delay = 0;
@@ -30,7 +33,7 @@ export class AreaEffect {
 
   initZone(
     style: string,
-    ownerSlot: number,
+    weaponSlot: number,
     x: number,
     y: number,
     delay: number,
@@ -41,12 +44,14 @@ export class AreaEffect {
     damage: number,
     impactDamage: number,
     pull: number,
+    ownerPlayerSlot: PlayerSlot | null = null,
   ): void {
     this.active = true;
     this.uid = nextAreaUid++;
     this.kind = 'zone';
     this.style = style;
-    this.ownerSlot = ownerSlot;
+    this.weaponSlot = weaponSlot;
+    this.ownerPlayerSlot = ownerPlayerSlot;
     this.x = x;
     this.y = y;
     this.delay = delay;
@@ -70,12 +75,22 @@ export class AreaEffect {
     this.impacted = false;
   }
 
-  initShockwave(style: string, x: number, y: number, startRadius: number, maxRadius: number, speed: number, damage: number): void {
+  initShockwave(
+    style: string,
+    x: number,
+    y: number,
+    startRadius: number,
+    maxRadius: number,
+    speed: number,
+    damage: number,
+    ownerPlayerSlot: PlayerSlot | null = null,
+  ): void {
     this.active = true;
     this.uid = nextAreaUid++;
     this.kind = 'shockwave';
     this.style = style;
-    this.ownerSlot = 0;
+    this.weaponSlot = 0;
+    this.ownerPlayerSlot = ownerPlayerSlot;
     this.x = x;
     this.y = y;
     this.delay = 0;
