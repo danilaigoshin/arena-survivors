@@ -1,5 +1,11 @@
+import type { PlayerSlot } from '../multiplayer/types';
+
+let nextProjectileUid = 1;
+
 export class Projectile {
   active = false;
+  uid = 0;
+  ownerPlayerSlot: PlayerSlot | null = null;
   x = 0;
   y = 0;
   prevX = 0;
@@ -24,7 +30,22 @@ export class Projectile {
   hitCount = 0;
   readonly hitUids = new Int32Array(12);
 
-  init(x: number, y: number, vx: number, vy: number, damage: number, pierce: number, ttl: number, friendly: boolean, crit: boolean, style = '', variant = 0): void {
+  init(
+    x: number,
+    y: number,
+    vx: number,
+    vy: number,
+    damage: number,
+    pierce: number,
+    ttl: number,
+    friendly: boolean,
+    crit: boolean,
+    style = '',
+    variant = 0,
+    ownerPlayerSlot: PlayerSlot | null = null,
+  ): void {
+    this.uid = nextProjectileUid++;
+    this.ownerPlayerSlot = ownerPlayerSlot;
     this.x = x;
     this.y = y;
     this.prevX = x;

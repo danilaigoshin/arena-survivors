@@ -18,6 +18,7 @@ A pixel-art arena survival roguelite in the browser. Survive 20 waves, build you
 - **Meta progression**: shards from runs, permanent perks, weapon unlocks, records
 - **Elite enemies, multi-phase bosses at waves 5/10/15/20, endless mode** after victory
 - **3 difficulty levels** and **8 interface languages**
+- **Two-player online co-op** with shared XP/materials and fully separate character builds
 - Pixel art, animation and synthesized sound — everything drawn and generated in code, zero external assets
 
 ![Combat](docs/gameplay.png)
@@ -26,18 +27,38 @@ A pixel-art arena survival roguelite in the browser. Survive 20 waves, build you
 
 ## Tech
 
-- **TypeScript + HTML5 Canvas 2D**, the only dependency is Vite
+- **TypeScript + HTML5 Canvas 2D**, built with Vite and tested with Vitest
+- **Trystero + WebRTC** for host-authoritative peer-to-peer co-op; public Nostr relays are used only for signaling
 - Fixed 60 Hz timestep, object pools, spatial grid — 300 enemies at 120 fps
 - Sprites are text-based pixel grids baked into offscreen canvases
 - Sound is WebAudio synthesis (no audio files), saves live in localStorage
+
+## Online co-op
+
+Choose **Co-op** in the main menu. One player creates a room and shares the
+six-character code; the second player joins with that code. Both choose a hero
+and mark themselves ready, then the host starts the run.
+
+The host's browser is the authoritative game server and must keep the tab open.
+Co-op supports exactly two players. Reconnect, host migration, spectators and
+join-in-progress are not supported; losing the connection ends the run without
+meta rewards.
+
+Game data travels directly between players over an encrypted WebRTC
+DataChannel. Public Nostr relays only introduce the peers. No TURN server is
+bundled, so a connection may fail behind some NAT or firewall configurations.
 
 ## Run locally
 
 ```bash
 npm install
 npm run dev      # http://localhost:5173
+npm run check    # TypeScript validation
+npm test         # Node-only unit and protocol tests
 npm run build    # production build in dist/
 ```
+
+Node.js 20 or newer is required.
 
 Pushes to `main` are built and deployed automatically with GitHub Actions. A deployment can also be started manually with `npm run deploy` when the GitHub CLI is authenticated.
 

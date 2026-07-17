@@ -2,6 +2,7 @@ import { Pool } from '../core/pool';
 import { POOL_DMG_NUMBERS, POOL_PARTICLES } from '../config';
 import { drawSprite, SPRITES } from './sprites';
 import { displayFont } from './font';
+import { emitPresentationEvent } from '../multiplayer/presentationBus';
 
 class DamageNumber {
   active = false;
@@ -111,6 +112,7 @@ export function spawnDamageNumber(x: number, y: number, value: number, crit = fa
 }
 
 export function spawnBurst(x: number, y: number, color: string, count: number): void {
+  emitPresentationEvent({ type: 'fx', effect: 'burst', x, y, color, count });
   for (let i = 0; i < count; i++) {
     const p = particles.alloc();
     if (!p) return;
@@ -164,6 +166,7 @@ export function spawnGibs(x: number, y: number, spriteId: string, count: number,
 
 /** Impact sparks along the hit direction. */
 export function spawnSparks(x: number, y: number, dirAngle: number, color: string, count: number): void {
+  emitPresentationEvent({ type: 'fx', effect: 'sparks', x, y, color, count, angle: dirAngle });
   for (let i = 0; i < count; i++) {
     const p = particles.alloc();
     if (!p) return;
@@ -197,6 +200,7 @@ export function spawnDeathPop(sprite: string, x: number, y: number, size: number
 }
 
 export function spawnRing(x: number, y: number, color: string): void {
+  emitPresentationEvent({ type: 'fx', effect: 'ring', x, y, color });
   const r = rings.alloc();
   if (!r) return;
   r.x = x;

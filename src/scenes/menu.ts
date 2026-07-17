@@ -10,6 +10,7 @@ import { charSelectScene } from './charSelect';
 import { metaScene } from './metaScene';
 import { infoScene } from './infoScene';
 import { loadMeta } from '../core/save';
+import { lobbyScene } from './lobbyScene';
 
 const WALKERS = ['chaser', 'runner', 'tank', 'shooter'];
 
@@ -30,6 +31,7 @@ class MenuScene implements Scene {
   private goCharSelect = false;
   private goMeta = false;
   private goInfo = false;
+  private goCoop = false;
   private toggles: { mute?: boolean; music?: boolean } = {};
   private langOpen = false;
 
@@ -48,6 +50,11 @@ class MenuScene implements Scene {
     if (this.goInfo) {
       this.goInfo = false;
       game.setScene(infoScene);
+      return;
+    }
+    if (this.goCoop) {
+      this.goCoop = false;
+      game.setScene(lobbyScene);
       return;
     }
     if (this.toggles.mute) {
@@ -150,7 +157,10 @@ class MenuScene implements Scene {
       this.goCharSelect = true;
     }
     const shards = loadMeta().shards;
-    if (button(ctx, ui, w / 2 - 140, by + 76, 280, 48, tt('menu.workshop', shards), { icon: 'i_shard' })) {
+    if (button(ctx, ui, w / 2 - 140, by + 74, 280, 48, tt('menu.coop'))) {
+      this.goCoop = true;
+    }
+    if (button(ctx, ui, w / 2 - 140, by + 134, 280, 48, tt('menu.workshop', shards), { icon: 'i_shard' })) {
       this.goMeta = true;
     }
 
@@ -158,14 +168,14 @@ class MenuScene implements Scene {
     ctx.fillStyle = '#667';
     ctx.font = '14px system-ui, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(isTouchDevice() ? tt('menu.hintTouch') : tt('menu.hint'), w / 2, by + 158);
+    ctx.fillText(isTouchDevice() ? tt('menu.hintTouch') : tt('menu.hint'), w / 2, by + 198);
 
     // records line
     const st = loadMeta().stats;
     if (st.runs > 0) {
       ctx.fillStyle = '#8a8aa6';
       ctx.font = 'bold 13px system-ui, sans-serif';
-      ctx.fillText(tt('menu.records', st.runs, st.wins, st.bestWave, st.bestKills), w / 2, by + 184);
+      ctx.fillText(tt('menu.records', st.runs, st.wins, st.bestWave, st.bestKills), w / 2, by + 220);
     }
 
     // version
@@ -177,7 +187,7 @@ class MenuScene implements Scene {
 
     // heroes on a podium row, safely below the hint
     const heroes = CHARACTERS;
-    const hy = Math.max(by + 230, h * 0.76);
+    const hy = Math.max(by + 252, h * 0.79);
     heroes.forEach((c, i) => {
       const x = w * 0.5 + (i - (heroes.length - 1) / 2) * 96;
       drawShadow(ctx, x, hy + 30, 44);

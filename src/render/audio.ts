@@ -1,3 +1,5 @@
+import { emitPresentationEvent } from '../multiplayer/presentationBus';
+
 export type SfxEvent =
   | 'shoot'
   | 'magic'
@@ -21,8 +23,8 @@ export type SfxEvent =
 let ac: AudioContext | null = null;
 let master: GainNode | null = null;
 let musicGain: GainNode | null = null;
-let muted = localStorage.getItem('as_muted') === '1';
-let musicOn = localStorage.getItem('as_music') !== '0';
+let muted = typeof localStorage !== 'undefined' && localStorage.getItem('as_muted') === '1';
+let musicOn = typeof localStorage === 'undefined' || localStorage.getItem('as_music') !== '0';
 let musicTimer: number | null = null;
 
 const lastPlayed: Partial<Record<SfxEvent, number>> = {};
@@ -54,13 +56,13 @@ export function isMusicOn(): boolean {
 
 export function toggleMute(): void {
   muted = !muted;
-  localStorage.setItem('as_muted', muted ? '1' : '0');
+  if (typeof localStorage !== 'undefined') localStorage.setItem('as_muted', muted ? '1' : '0');
   if (master && ac) master.gain.setTargetAtTime(muted ? 0 : 0.5, ac.currentTime, 0.01);
 }
 
 export function toggleMusic(): void {
   musicOn = !musicOn;
-  localStorage.setItem('as_music', musicOn ? '1' : '0');
+  if (typeof localStorage !== 'undefined') localStorage.setItem('as_music', musicOn ? '1' : '0');
   if (musicGain && ac) musicGain.gain.setTargetAtTime(musicOn ? 0.14 : 0, ac.currentTime, 0.05);
 }
 
@@ -110,6 +112,10 @@ function noise(dur: number, vol: number, filterFreq: number, delay = 0, dest?: A
 }
 
 export function playSfx(event: SfxEvent): void {
+  // UI feedback belongs to the local client. In particular, pause and modal
+  // controls live inside RunScene, whose update is otherwise captured for the
+  // host gameplay event stream.
+  if (event !== 'click') emitPresentationEvent({ type: 'sfx', sound: event });
   if (!ac || muted) return;
   const now = performance.now();
   const th = THROTTLE[event];

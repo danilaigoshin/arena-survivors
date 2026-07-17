@@ -4,7 +4,6 @@ import type { CharacterDef } from '../data/characters';
 import { CHARACTERS } from '../data/characters';
 import { WeaponInstance, type WeaponBranchId } from './weapon';
 import { PERKS } from '../data/perks';
-import { perkLevel } from '../core/save';
 import { activeSetBonuses, classCounts } from '../data/sets';
 import { WEAPON_CLASS } from '../data/sets';
 import { ABILITY_BALANCE } from '../data/abilities';
@@ -14,10 +13,17 @@ import type { AbilityAugmentId } from '../data/abilityAugments';
 import { weaponBranchById } from '../data/weaponBranches';
 import { MAX_WEAPON_SLOTS } from '../config';
 import { ARENA_W, ARENA_H } from '../config';
+import { EMPTY_PLAYER_PROFILE } from '../core/playerProfile';
+import type { PlayerProfile, PlayerSlot } from '../multiplayer/types';
 
 export class Player {
+  readonly slot: PlayerSlot;
+  readonly profile: PlayerProfile;
+  downed = false;
   x = ARENA_W / 2;
   y = ARENA_H / 2;
+  readonly arenaWidth = ARENA_W;
+  readonly arenaHeight = ARENA_H;
   radius = 16;
   hp: number;
   stats: Stats;
@@ -27,9 +33,6 @@ export class Player {
   upgradeMods: StatMod[] = [];
   talents = new Set<TalentId>();
   abilityAugments = new Set<AbilityAugmentId>();
-  xp = 0;
-  level = 1;
-  materials = 0;
   iframes = 0;
   regenAcc = 0;
   aimAngle = 0; // last direction a weapon fired, for visuals
@@ -53,7 +56,9 @@ export class Player {
   magneticPulseProgress = 0;
   private branchQueueCounter = 0;
 
-  constructor() {
+  constructor(slot: PlayerSlot = 0, profile: PlayerProfile = EMPTY_PLAYER_PROFILE) {
+    this.slot = slot;
+    this.profile = profile;
     this.stats = computeStats([]);
     this.hp = this.stats.maxHp;
   }
@@ -66,8 +71,8 @@ export class Player {
 
   recomputeStats(): void {
     const prevMax = this.stats.maxHp;
-    const metaMods: StatMod[] = PERKS.filter((p) => perkLevel(p.id) > 0).map((p) => {
-      const lvl = perkLevel(p.id);
+    const metaMods: StatMod[] = PERKS.filter((p) => this.profile.perkLevel(p.id) > 0).map((p) => {
+      const lvl = this.profile.perkLevel(p.id);
       const mod: StatMod = {};
       for (const k in p.perLevel) mod[k as keyof StatMod] = p.perLevel[k as keyof StatMod]! * lvl;
       return mod;
@@ -340,9 +345,6 @@ export class Player {
     return this.character.weaponClass === 'all' || WEAPON_CLASS[weapon.id] === this.character.weaponClass;
   }
 
-  xpToNext(): number {
-    return Math.round(8 + (this.level - 1) * 5 + Math.pow(this.level - 1, 2) * 1.2);
-  }
 }
 
 export { ARENA_W, ARENA_H };

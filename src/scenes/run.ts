@@ -1,23 +1,23 @@
 import type { Game, Scene } from '../game';
 import { getWaveDef } from '../data/waves';
 import { FINAL_WAVE, ARENA_W, ARENA_H, WAVE_END_MATERIAL_DROP_MULT } from '../config';
-import { moveAxis, isDown, consumeKeyPress, isTouchDevice, pauseButtonCircle } from '../core/input';
+import { isDown, consumeKeyPress, isTouchDevice, pauseButtonCircle } from '../core/input';
 import { toggleMute, toggleMusic, isMuted, isMusicOn, setMusicIntensity } from '../render/audio';
 import { loadMeta } from '../core/save';
 import { button, dimBackground, fitToViewport, panel, renderFitted } from '../render/ui';
-import { norm, clamp } from '../utils/math';
 import { updateSpawner } from '../systems/spawner';
 import { updateEnemies } from '../systems/enemyAI';
-import { updateAreaEffects, updateEnemyStatuses, updateWeapons, damageEnemy, damagePlayer } from '../systems/combat';
+import { updateAreaEffects, updateEnemyStatuses, updateWeapons, damageEnemy } from '../systems/combat';
 import { addShake } from '../render/fx';
 import { updateProjectiles, separateEnemies, enemyContactDamage } from '../systems/collision';
 import { updatePickups, updateRegen, rollUpgradeChoices } from '../systems/levelup';
-import type { UpgradeDef } from '../data/upgrades';
-import { rollTalentChoices, type TalentDef } from '../data/talents';
-import { generateMap, pushOutOfObstacles, hitsObstacle } from '../data/maps';
+import { UPGRADES, type UpgradeDef } from '../data/upgrades';
+import { TALENTS, rollTalentChoices, type TalentDef } from '../data/talents';
+import { generateMap, hitsObstacle } from '../data/maps';
 import { rollChestLoot, type ShopOffer } from '../systems/shop';
 import { WeaponInstance } from '../entities/weapon';
-import { MAX_TIER, TIER_DAMAGE, TIER_NAMES } from '../data/weapons';
+import { WEAPONS, MAX_TIER, TIER_DAMAGE, TIER_NAMES } from '../data/weapons';
+import { ITEMS } from '../data/items';
 import { WEAPON_CLASS } from '../data/sets';
 import { ABILITY_BALANCE } from '../data/abilities';
 import { spawnBurst, spawnRing } from '../render/fx';
@@ -34,11 +34,15 @@ import { STAT_LABELS, formatStatValue, type Stats } from '../entities/stats';
 import { shopScene } from './shopScene';
 import { eventScene } from './eventScene';
 import { endScene } from './endScene';
+import { menuScene } from './menu';
 import { createWaveObjective, failWaveObjective, updateWaveObjective } from '../systems/objectives';
 import { chance } from '../core/rng';
-
-const axis = { x: 0, y: 0 };
-const dir = { x: 0, y: 0 };
+import { applyPlayerMovement } from '../systems/playerMovement';
+import type { Player } from '../entities/player';
+import type { PlayerSlot } from '../multiplayer/types';
+import { GuestSession, HostSession } from '../multiplayer/session';
+import { resetPlayersForWave } from '../systems/squad';
+import { updateBomberExplosions, updateFirePatches } from '../systems/hazards';
 
 function drawPauseSlash(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number): void {
   ctx.save();
@@ -57,14 +61,25 @@ const LEVEL_LAYOUT_W = 720;
 const LEVEL_LAYOUT_H = 340;
 const LEVEL_CARD_Y = 96;
 type LevelChoice = UpgradeDef | TalentDef;
+const levelChoiceById = new Map<string, LevelChoice>([
+  ...UPGRADES.map((choice) => [choice.id, choice] as const),
+  ...TALENTS.map((choice) => [choice.id, choice] as const),
+]);
+const weaponByNetworkId = new Map(WEAPONS.map((definition) => [definition.id, definition]));
+const itemByNetworkId = new Map(ITEMS.map((definition) => [definition.id, definition]));
 
 class RunScene implements Scene {
   wantsJoystick = true;
   levelUpChoices: LevelChoice[] | null = null;
   private levelUpTalentMode = false;
   private levelUpAction: number | null = null;
+  private levelChoicesBySlot: [LevelChoice[] | null, LevelChoice[] | null] = [null, null];
+  private levelSubmitted: [boolean, boolean] = [false, false];
+  private levelPhaseRevision = 0;
+  private guestSubmittedRevision = 0;
+  private levelWaiting = false;
   get blocksJoystick(): boolean {
-    return !!(this.levelUpChoices || this.paused || this.chestReward);
+    return !!(this.levelUpChoices || this.levelWaiting || this.paused || this.remotePaused || this.chestReward);
   }
   /** overlay pop-in: timestamp when the current overlay opened (ms) */
   private overlayOpenAt = 0;
@@ -76,9 +91,20 @@ class RunScene implements Scene {
   private pauseAction: 'resume' | 'surrender' | 'mute' | 'music' | null = null;
   chestReward: ShopOffer | null = null;
   private chestAction: 'take' | 'scrap' | null = null;
+  private chestOwnerSlot: PlayerSlot = 0;
+  private chestPhaseRevision = 0;
+  private guestChestSubmittedRevision = 0;
+  private readonly lastAbilityPressSeq = [0, 0];
+  private connectionExit = false;
+  private remotePaused = false;
+  private ending = false;
 
   enterWave(game: Game): void {
     const s = game.state;
+    if (s.wave === 1) {
+      this.lastAbilityPressSeq[0] = 0;
+      this.lastAbilityPressSeq[1] = 0;
+    }
     s.waveTimer = getWaveDef(s.wave).duration;
     s.spawnTimer = 0.6;
     s.vacuum = false;
@@ -86,13 +112,21 @@ class RunScene implements Scene {
     s.bossDead = false;
     this.levelUpChoices = null;
     this.levelUpAction = null;
+    this.levelChoicesBySlot = [null, null];
+    this.levelSubmitted = [false, false];
+    this.levelPhaseRevision = 0;
+    this.guestSubmittedRevision = 0;
+    this.levelWaiting = false;
+    this.chestPhaseRevision = 0;
+    this.guestChestSubmittedRevision = 0;
+    this.remotePaused = false;
+    this.ending = false;
     this.waveEndTimer = -1;
     this.paused = false;
     // newbie hints on the very first run
     this.hintTimer = s.wave === 1 && loadMeta().stats.runs === 0 ? 8 : 0;
     // every wave starts at full health (Brotato-style)
-    s.player.hp = s.player.stats.maxHp;
-    s.player.resetWaveMechanics();
+    resetPlayersForWave(s.players);
     s.projectiles.clear();
     s.areaEffects.clear();
     // fresh map every wave
@@ -105,15 +139,17 @@ class RunScene implements Scene {
     setMusicIntensity(getWaveDef(s.wave).boss ? 1 : 0.6);
     // battlefield chests: one guaranteed, sometimes two
     s.chests = [];
-    const chestCount = 1 + (Math.random() < 0.25 ? 1 : 0);
-    for (let i = 0; i < chestCount; i++) {
-      for (let tries = 0; tries < 20; tries++) {
-        const x = 140 + Math.random() * (ARENA_W - 280);
-        const y = 140 + Math.random() * (ARENA_H - 280);
-        const dc = (x - ARENA_W / 2) ** 2 + (y - ARENA_H / 2) ** 2;
-        if (dc > 350 * 350 && !hitsObstacle(s.obstacles, x, y, 26)) {
-          s.chests.push({ x, y });
-          break;
+    if (game.sessionRole !== 'guest') {
+      const chestCount = 1 + (Math.random() < 0.25 ? 1 : 0);
+      for (let i = 0; i < chestCount; i++) {
+        for (let tries = 0; tries < 20; tries++) {
+          const x = 140 + Math.random() * (ARENA_W - 280);
+          const y = 140 + Math.random() * (ARENA_H - 280);
+          const dc = (x - ARENA_W / 2) ** 2 + (y - ARENA_H / 2) ** 2;
+          if (dc > 350 * 350 && !hitsObstacle(s.obstacles, x, y, 26)) {
+            s.chests.push(s.createChest(x, y));
+            break;
+          }
         }
       }
     }
@@ -122,11 +158,13 @@ class RunScene implements Scene {
     s.explosions = [];
     s.firePatches = [];
     // the center stays obstacle-free by generation, put the player there
-    s.player.x = ARENA_W / 2;
-    s.player.y = ARENA_H / 2;
+    for (const player of s.players) {
+      player.x = ARENA_W / 2 + (player.slot === 0 ? -28 : 28) * (s.players.length > 1 ? 1 : 0);
+      player.y = ARENA_H / 2;
+    }
     s.waveMaterials = 0;
-    s.objective = createWaveObjective(s);
-    game.camera.follow(s.player.x, s.player.y);
+    s.objective = game.sessionRole === 'guest' ? null : createWaveObjective(s);
+    game.camera.follow(game.localPlayer.x, game.localPlayer.y);
   }
 
   private virtualCardRect(i: number, count: number): [number, number, number, number] {
@@ -139,10 +177,37 @@ class RunScene implements Scene {
 
   update(game: Game, dt: number): void {
     const s = game.state;
-    const p = s.player;
+    const p = game.localPlayer;
+    const localSlot = game.localPlayerSlot;
+
+    if (game.networkSession?.status === 'connection-lost') {
+      if (this.connectionExit) {
+        this.connectionExit = false;
+        const session = game.networkSession;
+        game.networkSession = null;
+        game.sessionRole = 'solo';
+        void session.close();
+        game.setScene(menuScene, true);
+      }
+      return;
+    }
+    const activeHostSession = game.networkSession instanceof HostSession ? game.networkSession : null;
+    if (activeHostSession?.pausedByVisibility) this.paused = true;
+    if (game.sessionRole === 'guest') {
+      const session = game.networkSession;
+      if (session instanceof GuestSession) this.updateGuestPhase(game, session);
+      game.camera.follow(p.x, p.y);
+      updateFx(dt);
+      return;
+    }
 
     // chest reward overlay pauses the sim until a choice is made
     if (this.chestReward) {
+      const session = game.networkSession;
+      if (session instanceof HostSession && game.state.players.length === 2) {
+        this.updateHostChestPhase(game, session);
+        return;
+      }
       const a = this.chestAction;
       this.chestAction = null;
       if (a) {
@@ -155,6 +220,18 @@ class RunScene implements Scene {
     // pause toggle (not while the level-up chooser is open)
     if (consumeKeyPress('Escape') && !this.levelUpChoices) {
       this.paused = !this.paused;
+      if (activeHostSession) {
+        if (this.paused) {
+          activeHostSession.publishPhase({
+            version: 1,
+            phase: 'paused',
+            phaseRevision: activeHostSession.nextPhaseRevision(),
+            reason: 'host',
+          });
+        } else {
+          activeHostSession.publishRunPhase(s.wave);
+        }
+      }
       playSfx('click');
     }
     // touch: tap on the on-screen pause button
@@ -163,53 +240,45 @@ class RunScene implements Scene {
       if ((game.ui.mx - pc.x) ** 2 + (game.ui.my - pc.y) ** 2 <= pc.hitR * pc.hitR) {
         game.ui.clicked = false;
         this.paused = true;
+        if (activeHostSession) {
+          activeHostSession.publishPhase({
+            version: 1,
+            phase: 'paused',
+            phaseRevision: activeHostSession.nextPhaseRevision(),
+            reason: 'host',
+          });
+        }
         playSfx('click');
       }
     }
     if (this.paused) {
       const a = this.pauseAction;
       this.pauseAction = null;
-      if (a === 'resume') this.paused = false;
+      if (a === 'resume') {
+        this.paused = false;
+        if (activeHostSession) activeHostSession.publishRunPhase(s.wave);
+      }
       else if (a === 'mute') toggleMute();
       else if (a === 'music') toggleMusic();
       else if (a === 'surrender') {
         this.paused = false;
-        endScene.enter(game, false);
-        game.setScene(endScene);
+        this.beginEnd(game, false);
       }
       return;
     }
 
-    // level-up overlay pauses the sim
-    if (s.pendingLevelUps > 0 && !this.levelUpChoices) {
-      const wantsTalent = s.pendingTalentLevelUps > 0;
-      const talentChoices = wantsTalent ? rollTalentChoices(p.talents) : [];
-      this.levelUpTalentMode = talentChoices.length > 0;
-      if (wantsTalent && !this.levelUpTalentMode) s.pendingTalentLevelUps--;
-      this.levelUpChoices = this.levelUpTalentMode ? talentChoices : rollUpgradeChoices(p.stats.luck);
-      this.levelUpAction = null;
-    }
-    if (this.levelUpChoices) {
-      const choice = this.levelUpAction;
-      this.levelUpAction = null;
-      if (choice !== null && choice >= 0 && choice < this.levelUpChoices.length) {
-        const selected = this.levelUpChoices[choice];
-        if (isTalentChoice(selected)) {
-          p.addTalent(selected.id);
-          s.pendingTalentLevelUps--;
-        } else {
-          p.addUpgrade(selected.modifiers);
-        }
-        s.pendingLevelUps--;
-        this.levelUpChoices = null;
-        playSfx('click');
-      }
+    // In co-op the host rolls both personal choices and waits for both
+    // revision-checked submissions. Solo keeps the original immediate flow.
+    const hostSession = activeHostSession;
+    if (hostSession && s.players.length === 2) {
+      if (this.updateHostLevelPhase(game, hostSession)) return;
+    } else if (this.updateSoloLevelPhase(game, localSlot)) {
       return;
     }
 
     // dev cheats
     if (import.meta.env.DEV) {
-      if (isDown('F9')) p.materials += 5;
+      if (isDown('F9')) s.squad.materials += 5;
       if (isDown('F10')) s.waveTimer = Math.min(s.waveTimer, 0.1);
     }
 
@@ -219,24 +288,28 @@ class RunScene implements Scene {
       return;
     }
 
-    // player movement
-    moveAxis(axis);
-    norm(axis.x, axis.y, dir);
-    p.moving = axis.x !== 0 || axis.y !== 0;
-    p.updateTalentTimers(dt);
-
-    // active ability (Space)
-    p.abilityCd = Math.max(0, p.abilityCd - dt);
-    if (consumeKeyPress('Space') && p.abilityCd <= 0) {
-      this.useAbility(game);
+    // Host-authoritative movement uses the same pure movement function for
+    // local input, remote input and guest prediction.
+    const nowMs = performance.now();
+    for (const player of s.players) {
+      const input = player.downed
+        ? { moveX: 0, moveY: 0, abilityPressSeq: this.lastAbilityPressSeq[player.slot] }
+        : game.inputForSlot(player.slot, nowMs);
+      applyPlayerMovement(player, s.obstacles, input, dt);
+      player.updateTalentTimers(dt);
+      player.abilityCd = Math.max(0, player.abilityCd - dt);
+      if (
+        !player.downed
+        && input.abilityPressSeq > this.lastAbilityPressSeq[player.slot]
+        && player.abilityCd <= 0
+      ) {
+        this.useAbility(player);
+      }
+      this.lastAbilityPressSeq[player.slot] = Math.max(this.lastAbilityPressSeq[player.slot], input.abilityPressSeq);
+      player.updateAbilityTimers(dt);
+      player.slowT = Math.max(0, player.slowT - dt);
+      player.iframes = Math.max(0, player.iframes - dt);
     }
-    p.updateAbilityTimers(dt);
-    p.slowT = Math.max(0, p.slowT - dt);
-    const moveMult = (p.slowT > 0 ? 0.6 : 1) * p.abilityMoveSpeedMultiplier() * p.talentMoveSpeedMultiplier();
-    p.x = clamp(p.x + dir.x * p.stats.moveSpeed * moveMult * dt, p.radius, ARENA_W - p.radius);
-    p.y = clamp(p.y + dir.y * p.stats.moveSpeed * moveMult * dt, p.radius, ARENA_H - p.radius);
-    pushOutOfObstacles(s.obstacles, p);
-    p.iframes = Math.max(0, p.iframes - dt);
     this.bannerTimer = Math.max(0, this.bannerTimer - dt);
     this.hintTimer = Math.max(0, this.hintTimer - dt);
 
@@ -265,47 +338,35 @@ class RunScene implements Scene {
     if (!inWaveEnd) updateWaveObjective(s, dt);
     updateFx(dt);
 
-    // bomber explosions: telegraph counts down, then boom
-    for (let i = s.explosions.length - 1; i >= 0; i--) {
-      const ex = s.explosions[i];
-      ex.t -= dt;
-      if (ex.t <= 0) {
-        const rr = ex.radius + p.radius;
-        if ((ex.x - p.x) ** 2 + (ex.y - p.y) ** 2 <= rr * rr) damagePlayer(s, ex.damage);
-        // friendly fire: the blast hurts enemies too
-        s.grid.queryCircle(ex.x, ex.y, ex.radius + 40, (ei) => {
-          const en = s.enemies.items[ei];
-          if (!en.active || en.hp <= 0) return;
-          const r2 = (ex.radius + en.radius) ** 2;
-          if ((ex.x - en.x) ** 2 + (ex.y - en.y) ** 2 <= r2) damageEnemy(s, en, 25, false, 0, 0);
-        });
-        spawnBurst(ex.x, ex.y, '#ff7030', 18);
-        addShake(5);
-        playSfx('death');
-        s.explosions.splice(i, 1);
-      }
-    }
+    updateBomberExplosions(s, dt);
+    updateFirePatches(s, dt);
 
-    // burning ground
-    for (let i = s.firePatches.length - 1; i >= 0; i--) {
-      const f = s.firePatches[i];
-      f.ttl -= dt;
-      if (f.ttl <= 0) {
-        s.firePatches.splice(i, 1);
-        continue;
-      }
-      const rr = 26 + p.radius;
-      if ((f.x - p.x) ** 2 + (f.y - p.y) ** 2 <= rr * rr) damagePlayer(s, 6);
-    }
-
-    // chest pickup: walk over it to open
+    // chest pickup: nearest touching alive player wins; ties go to lower slot.
     for (let i = 0; i < s.chests.length; i++) {
       const c = s.chests[i];
-      const rr = p.radius + 24;
-      if ((c.x - p.x) ** 2 + (c.y - p.y) ** 2 <= rr * rr) {
+      let opener: Player | null = null;
+      let openerDistance = Infinity;
+      for (const player of s.alivePlayers()) {
+        const rr = player.radius + 24;
+        const distance = (c.x - player.x) ** 2 + (c.y - player.y) ** 2;
+        if (
+          distance <= rr * rr
+          && (distance < openerDistance || (distance === openerDistance && opener !== null && player.slot < opener.slot))
+        ) {
+          opener = player;
+          openerDistance = distance;
+        }
+      }
+      if (opener) {
         s.chests.splice(i, 1);
-        this.chestReward = rollChestLoot(s.wave, p);
+        this.chestOwnerSlot = opener.slot;
+        this.chestReward = rollChestLoot(s.wave, opener);
         this.chestAction = null;
+        const session = game.networkSession;
+        if (session instanceof HostSession && s.players.length === 2) {
+          this.chestPhaseRevision = session.nextPhaseRevision();
+          this.publishChestPhase(session);
+        }
         spawnBurst(c.x, c.y, '#ffd23e', 14);
         spawnRing(c.x, c.y, '#ffd23e');
         playSfx('levelup');
@@ -313,12 +374,11 @@ class RunScene implements Scene {
       }
     }
 
-    game.camera.follow(p.x, p.y);
+    game.camera.follow(game.localPlayer.x, game.localPlayer.y);
 
-    // death
-    if (p.hp <= 0) {
-      endScene.enter(game, false);
-      game.setScene(endScene);
+    // defeat only after the whole squad is downed.
+    if (s.allPlayersDowned()) {
+      this.beginEnd(game, false);
       return;
     }
 
@@ -339,14 +399,16 @@ class RunScene implements Scene {
       this.waveEndTimer -= dt;
       if (this.waveEndTimer <= 0 && s.pickups.count === 0) {
         if (s.wave === FINAL_WAVE) {
-          endScene.enter(game, true);
-          game.setScene(endScene);
+          this.beginEnd(game, true);
         } else if (Math.random() < 0.22) {
           // random between-waves event instead of a plain shop
           const roll = Math.random();
           if (roll < 0.34) {
             shopScene.enter(game, 0.7); // wandering trader, -30%
             game.setScene(shopScene);
+          } else if (game.networkSession instanceof HostSession) {
+            eventScene.enterNetwork(game);
+            game.setScene(eventScene);
           } else {
             eventScene.enter(game, roll < 0.67 ? 'chest' : 'altar');
             game.setScene(eventScene);
@@ -359,9 +421,333 @@ class RunScene implements Scene {
     }
   }
 
+  private beginEnd(game: Game, won: boolean): void {
+    if (this.ending) return;
+    this.ending = true;
+    endScene.enter(game, won);
+    game.setScene(endScene);
+  }
+
+  private updateSoloLevelPhase(game: Game, localSlot: PlayerSlot): boolean {
+    const state = game.state;
+    const player = game.localPlayer;
+    if (state.pendingLevelUps[localSlot] > 0 && !this.levelUpChoices) {
+      const wantsTalent = state.pendingTalentLevelUps[localSlot] > 0;
+      const talentChoices = wantsTalent ? rollTalentChoices(player.talents) : [];
+      this.levelUpTalentMode = talentChoices.length > 0;
+      if (wantsTalent && !this.levelUpTalentMode) state.pendingTalentLevelUps[localSlot]--;
+      this.levelUpChoices = this.levelUpTalentMode ? talentChoices : rollUpgradeChoices(player.stats.luck);
+      this.levelUpAction = null;
+    }
+    if (!this.levelUpChoices) return false;
+    this.levelWaiting = false;
+    const choice = this.levelUpAction;
+    this.levelUpAction = null;
+    if (choice !== null && choice >= 0 && choice < this.levelUpChoices.length) {
+      this.applyLevelChoice(game, localSlot, this.levelUpChoices[choice]);
+      this.levelUpChoices = null;
+      playSfx('click');
+    }
+    return true;
+  }
+
+  private chestLootId(offer: ShopOffer): string {
+    return offer.kind === 'weapon' ? `weapon:${offer.weapon.id}` : `item:${offer.item.id}`;
+  }
+
+  private resolveChestLoot(id: string): ShopOffer | null {
+    const separator = id.indexOf(':');
+    if (separator < 1) return null;
+    const kind = id.slice(0, separator);
+    const definitionId = id.slice(separator + 1);
+    if (kind === 'weapon') {
+      const weapon = weaponByNetworkId.get(definitionId);
+      return weapon ? { kind: 'weapon', weapon, price: weapon.price, sold: false } : null;
+    }
+    if (kind === 'item') {
+      const item = itemByNetworkId.get(definitionId);
+      return item ? { kind: 'item', item, price: item.basePrice, sold: false } : null;
+    }
+    return null;
+  }
+
+  private publishChestPhase(session: HostSession): void {
+    if (!this.chestReward) return;
+    session.publishPhase({
+      version: 1,
+      phase: 'chest',
+      phaseRevision: this.chestPhaseRevision,
+      ownerSlot: this.chestOwnerSlot,
+      choices: [this.chestLootId(this.chestReward)],
+      submitted: false,
+    });
+  }
+
+  private finishNetworkChest(game: Game, session: HostSession, action: 'take' | 'scrap'): void {
+    if (!this.chestReward) return;
+    this.applyChestChoice(game, action);
+    this.chestReward = null;
+    this.chestAction = null;
+    this.chestPhaseRevision = 0;
+    session.publishBuild(game);
+    session.publishPhase({
+      version: 1,
+      phase: 'run',
+      phaseRevision: session.nextPhaseRevision(),
+      wave: game.state.wave,
+    });
+  }
+
+  private updateHostChestPhase(game: Game, session: HostSession): void {
+    for (const message of session.drainPhaseCommands()) {
+      if (
+        message.command !== 'chest-choice'
+        || message.phaseRevision !== this.chestPhaseRevision
+        || this.chestOwnerSlot !== 1
+        || message.ids.length !== 1
+        || (message.ids[0] !== 'take' && message.ids[0] !== 'scrap')
+      ) {
+        session.resendPhase();
+        continue;
+      }
+      this.finishNetworkChest(game, session, message.ids[0]);
+      return;
+    }
+    const localAction = this.chestAction;
+    this.chestAction = null;
+    if (
+      this.chestOwnerSlot === game.localPlayerSlot
+      && (localAction === 'take' || localAction === 'scrap')
+    ) {
+      this.finishNetworkChest(game, session, localAction);
+    }
+  }
+
+  private rollLevelChoices(game: Game, slot: PlayerSlot): LevelChoice[] {
+    const state = game.state;
+    const player = state.playerBySlot(slot);
+    if (!player || state.pendingLevelUps[slot] <= 0) return [];
+    const wantsTalent = state.pendingTalentLevelUps[slot] > 0;
+    const talents = wantsTalent ? rollTalentChoices(player.talents) : [];
+    if (talents.length > 0) return talents;
+    if (wantsTalent) state.pendingTalentLevelUps[slot]--;
+    return rollUpgradeChoices(player.stats.luck);
+  }
+
+  private applyLevelChoice(game: Game, slot: PlayerSlot, selected: LevelChoice): boolean {
+    const state = game.state;
+    const player = state.playerBySlot(slot);
+    if (!player || state.pendingLevelUps[slot] <= 0) return false;
+    if (isTalentChoice(selected)) {
+      if (state.pendingTalentLevelUps[slot] <= 0 || player.talents.has(selected.id)) return false;
+      player.addTalent(selected.id);
+      state.pendingTalentLevelUps[slot]--;
+    } else {
+      player.addUpgrade(selected.modifiers);
+    }
+    state.pendingLevelUps[slot]--;
+    return true;
+  }
+
+  private publishLevelPhase(session: HostSession): void {
+    session.publishPhase({
+      version: 1,
+      phase: 'level-up',
+      phaseRevision: this.levelPhaseRevision,
+      choices: [
+        (this.levelChoicesBySlot[0] ?? []).map((choice) => choice.id),
+        (this.levelChoicesBySlot[1] ?? []).map((choice) => choice.id),
+      ],
+      submitted: [...this.levelSubmitted],
+    });
+  }
+
+  private startLevelPair(game: Game, session: HostSession): void {
+    this.levelPhaseRevision = session.nextPhaseRevision();
+    this.levelChoicesBySlot = [
+      this.rollLevelChoices(game, 0),
+      this.rollLevelChoices(game, 1),
+    ];
+    this.levelSubmitted = [
+      this.levelChoicesBySlot[0]!.length === 0,
+      this.levelChoicesBySlot[1]!.length === 0,
+    ];
+    this.levelUpChoices = this.levelChoicesBySlot[0];
+    this.levelUpTalentMode = !!this.levelUpChoices?.some(isTalentChoice);
+    this.levelWaiting = this.levelSubmitted[0] && !this.levelSubmitted.every(Boolean);
+    this.levelUpAction = null;
+    this.publishLevelPhase(session);
+  }
+
+  private submitHostLevelChoice(
+    game: Game,
+    session: HostSession,
+    slot: PlayerSlot,
+    choiceId: string,
+    phaseRevision: number,
+  ): boolean {
+    if (
+      phaseRevision !== this.levelPhaseRevision
+      || this.levelSubmitted[slot]
+      || !this.levelChoicesBySlot[slot]
+    ) return false;
+    const selected = this.levelChoicesBySlot[slot]!.find((choice) => choice.id === choiceId);
+    if (!selected || !this.applyLevelChoice(game, slot, selected)) return false;
+    this.levelSubmitted[slot] = true;
+    this.levelChoicesBySlot[slot] = null;
+    if (slot === game.localPlayerSlot) this.levelUpChoices = null;
+    session.publishBuild(game);
+    this.publishLevelPhase(session);
+    return true;
+  }
+
+  private updateHostLevelPhase(game: Game, session: HostSession): boolean {
+    const state = game.state;
+    for (const message of session.drainPhaseCommands()) {
+      if (
+        message.command !== 'level-choice'
+        || message.ids.length !== 1
+        || !this.submitHostLevelChoice(game, session, 1, message.ids[0], message.phaseRevision)
+      ) session.resendPhase();
+    }
+
+    const hasPending = state.pendingLevelUps.some((count) => count > 0);
+    const active = this.levelPhaseRevision > 0 && !this.levelSubmitted.every(Boolean);
+    if (!active && hasPending && this.levelChoicesBySlot.every((choices) => choices === null)) {
+      this.startLevelPair(game, session);
+    }
+
+    if (this.levelPhaseRevision === 0) return false;
+    if (!this.levelSubmitted[0]) {
+      this.levelUpChoices = this.levelChoicesBySlot[0];
+      this.levelUpTalentMode = !!this.levelUpChoices?.some(isTalentChoice);
+      const choiceIndex = this.levelUpAction;
+      this.levelUpAction = null;
+      if (choiceIndex !== null && this.levelUpChoices?.[choiceIndex]) {
+        this.submitHostLevelChoice(
+          game,
+          session,
+          0,
+          this.levelUpChoices[choiceIndex].id,
+          this.levelPhaseRevision,
+        );
+        playSfx('click');
+      }
+      this.levelWaiting = this.levelSubmitted[0] && !this.levelSubmitted.every(Boolean);
+    } else {
+      this.levelUpChoices = null;
+      this.levelUpAction = null;
+      this.levelWaiting = !this.levelSubmitted.every(Boolean);
+    }
+
+    if (!this.levelSubmitted.every(Boolean)) return true;
+    this.levelChoicesBySlot = [null, null];
+    this.levelPhaseRevision = 0;
+    this.levelWaiting = false;
+    if (state.pendingLevelUps.some((count) => count > 0)) {
+      this.startLevelPair(game, session);
+      return true;
+    }
+    session.publishPhase({
+      version: 1,
+      phase: 'run',
+      phaseRevision: session.nextPhaseRevision(),
+      wave: state.wave,
+    });
+    return false;
+  }
+
+  private updateGuestPhase(game: Game, session: GuestSession): void {
+    const phase = session.phaseState;
+    if (phase?.phase === 'paused') {
+      this.remotePaused = true;
+      this.levelUpChoices = null;
+      this.chestReward = null;
+      this.levelUpAction = null;
+      this.levelWaiting = false;
+      this.chestAction = null;
+      return;
+    }
+    this.remotePaused = false;
+    if (phase?.phase === 'shop') {
+      this.levelUpChoices = null;
+      this.levelWaiting = false;
+      this.chestReward = null;
+      if (shopScene.enterRemote(game, phase)) game.setScene(shopScene, true);
+      return;
+    }
+    if (phase?.phase === 'event') {
+      this.levelUpChoices = null;
+      this.levelWaiting = false;
+      this.chestReward = null;
+      if (eventScene.enterRemote(game, phase)) game.setScene(eventScene, true);
+      return;
+    }
+    if (phase?.phase === 'end') {
+      this.levelUpChoices = null;
+      this.levelWaiting = false;
+      this.chestReward = null;
+      endScene.enterRemote(game, phase.won);
+      game.setScene(endScene, true);
+      return;
+    }
+    if (phase?.phase === 'chest') {
+      this.levelUpChoices = null;
+      this.levelUpAction = null;
+      this.levelWaiting = false;
+      this.chestOwnerSlot = phase.ownerSlot;
+      this.chestPhaseRevision = phase.phaseRevision;
+      const loot = phase.choices.length === 1 ? this.resolveChestLoot(phase.choices[0]) : null;
+      if (loot) this.chestReward = loot;
+      const localCanSubmit = phase.ownerSlot === game.localPlayerSlot
+        && !phase.submitted
+        && this.guestChestSubmittedRevision !== phase.phaseRevision;
+      const action = this.chestAction;
+      this.chestAction = null;
+      if (localCanSubmit && (action === 'take' || action === 'scrap')) {
+        session.sendPhaseCommand(phase.phaseRevision, 'chest-choice', [action]);
+        this.guestChestSubmittedRevision = phase.phaseRevision;
+        playSfx('click');
+      }
+      return;
+    }
+    if (this.chestPhaseRevision > 0) {
+      this.chestReward = null;
+      this.chestAction = null;
+      this.chestPhaseRevision = 0;
+      this.guestChestSubmittedRevision = 0;
+    }
+    if (!phase || phase.phase !== 'level-up') {
+      this.levelUpChoices = null;
+      this.levelUpAction = null;
+      this.guestSubmittedRevision = 0;
+      this.levelWaiting = false;
+      return;
+    }
+    const slot = game.localPlayerSlot;
+    const ids = phase.choices[slot];
+    const submitted = phase.submitted[slot] || this.guestSubmittedRevision === phase.phaseRevision;
+    this.levelUpChoices = submitted
+      ? null
+      : ids.map((id) => levelChoiceById.get(id)).filter((choice): choice is LevelChoice => !!choice);
+    this.levelWaiting = submitted;
+    this.levelUpTalentMode = !!this.levelUpChoices?.some(isTalentChoice);
+    const choiceIndex = this.levelUpAction;
+    this.levelUpAction = null;
+    if (choiceIndex === null || !this.levelUpChoices?.[choiceIndex]) return;
+    session.sendPhaseCommand(
+      phase.phaseRevision,
+      'level-choice',
+      [this.levelUpChoices[choiceIndex].id],
+    );
+    this.guestSubmittedRevision = phase.phaseRevision;
+    this.levelUpChoices = null;
+    this.levelWaiting = true;
+    playSfx('click');
+  }
+
   /** Character active ability on Space. */
-  private useAbility(game: Game): void {
-    const p = game.state.player;
+  private useAbility(p: Player): void {
     const ab = p.character.ability;
     p.abilityCd = p.abilityCooldown();
     p.activateAbility();
@@ -392,7 +778,7 @@ class RunScene implements Scene {
 
   private updateAbilityEffects(game: Game, dt: number): void {
     const s = game.state;
-    const p = s.player;
+    for (const p of s.alivePlayers()) {
     if (p.character.ability.id === 'whirlwind' && p.abilityActiveT > 0 && p.abilityPulseCount < p.whirlwindHits()) {
       p.abilityPulseT -= dt;
       while (p.abilityPulseT <= 0 && p.abilityPulseCount < p.whirlwindHits()) {
@@ -411,7 +797,19 @@ class RunScene implements Scene {
           const rr = radius + e.radius;
           if (dx * dx + dy * dy > rr * rr) return;
           const len = Math.max(1, Math.hypot(dx, dy));
-          damageEnemy(s, e, rawDamage, false, (dx / len) * 220, (dy / len) * 220, '#ffd23e');
+          damageEnemy(
+            s,
+            e,
+            rawDamage,
+            false,
+            (dx / len) * 220,
+            (dy / len) * 220,
+            '#ffd23e',
+            p.x,
+            p.y,
+            0,
+            { ownerPlayerSlot: p.slot, x: p.x, y: p.y },
+          );
           // Keep the original hit direction for shield-facing checks, then turn
           // the resulting +220 impulse into a net −180 pull.
           if (p.hasAbilityAugment('whirlwind_pull') && e.active) {
@@ -440,21 +838,22 @@ class RunScene implements Scene {
         e.slowT = Math.max(e.slowT, 0.1);
       });
     }
+    }
   }
 
   /** Take or dismantle the chest reward. */
   private applyChestChoice(game: Game, action: 'take' | 'scrap'): void {
-    const p = game.state.player;
+    const p = game.state.playerBySlot(this.chestOwnerSlot) ?? game.state.players[0];
     const r = this.chestReward!;
     if (action === 'scrap') {
       const value = Math.max(1, Math.round((r.kind === 'weapon' ? r.weapon.price : r.item.basePrice) * 0.8));
-      p.materials += value;
+      game.state.squad.materials += value;
       playSfx('buy');
       return;
     }
     if (r.kind === 'weapon') {
       if (!p.canUseWeapon(r.weapon)) {
-        p.materials += Math.max(1, Math.round(r.weapon.price * 0.8));
+        game.state.squad.materials += Math.max(1, Math.round(r.weapon.price * 0.8));
         playSfx('buy');
         return;
       }
@@ -467,7 +866,7 @@ class RunScene implements Scene {
         p.weapons.push(new WeaponInstance(r.weapon, p.weapons.length));
       } else {
         // shouldn't happen (button disabled), fall back to scrap
-        p.materials += Math.max(1, Math.round(r.weapon.price * 0.8));
+        game.state.squad.materials += Math.max(1, Math.round(r.weapon.price * 0.8));
       }
       p.recomputeStats();
     } else {
@@ -480,7 +879,7 @@ class RunScene implements Scene {
     this.waveEndTimer = WAVE_END_DELAY;
     s.vacuum = true;
     failWaveObjective(s);
-    s.player.clearAbilityEffects();
+    for (const player of s.players) player.clearAbilityEffects();
     // Undefeated enemies only yield partial salvage. Fractional values are
     // rolled instead of guaranteeing one gem per survivor at wave end.
     for (let i = 0; i < s.enemies.count; i++) {
@@ -507,7 +906,7 @@ class RunScene implements Scene {
     // darkness vignette with a light pocket around the player
     const dk = game.state.theme.darkness;
     if (dk > 0) {
-      const p = game.state.player;
+      const p = game.localPlayer;
       const px = w / 2 + (p.x - game.camera.x) * game.camera.zoom;
       const py = h / 2 + (p.y - game.camera.y) * game.camera.zoom;
       const g = ctx.createRadialGradient(px, py, 150, px, py, Math.max(w, h) * 0.72);
@@ -517,7 +916,7 @@ class RunScene implements Scene {
       ctx.fillRect(0, 0, w, h);
     }
 
-    renderHud(ctx, game.state, game.viewport);
+    renderHud(ctx, game.state, game.viewport, game.localPlayerSlot);
 
     if (import.meta.env.DEV) {
       ctx.fillStyle = '#888';
@@ -525,11 +924,53 @@ class RunScene implements Scene {
       ctx.textAlign = 'right';
       ctx.textBaseline = 'top';
       ctx.fillText(`${game.fps} fps  враги: ${game.state.enemies.count}`, w - 10, h - 18);
+      const metrics = game.networkSession?.metrics;
+      if (metrics) {
+        ctx.fillText(
+          `rtt ${metrics.rtt.toFixed(0)}ms · snap ${metrics.snapshotBytes}b/${metrics.snapshotSendMs.toFixed(1)}ms`
+          + ` · pending ${metrics.snapshotPending ? 1 : 0} · interp ${metrics.interpolationAge.toFixed(0)}ms`,
+          w - 10,
+          h - 34,
+        );
+        ctx.fillText(
+          `corr ${metrics.predictionCorrection.toFixed(1)} · input ${metrics.lastInputSeq}`
+          + ` · event ${metrics.lastEventId} · build ${metrics.buildRevision} · phase ${metrics.phaseRevision}`,
+          w - 10,
+          h - 50,
+        );
+      }
+    }
+
+    if (game.networkSession?.status === 'connection-lost') {
+      dimBackground(ctx, w, h);
+      panel(ctx, w / 2 - 220, h / 2 - 100, 440, 200, { radius: 18, border: '#ff547066' });
+      ctx.fillStyle = '#ff7080';
+      ctx.font = displayFont(20);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(t('coop.connectionLost'), w / 2, h / 2 - 42);
+      if (button(ctx, game.ui, w / 2 - 120, h / 2 + 20, 240, 50, t('coop.leave'))) {
+        this.connectionExit = true;
+      }
+      return;
+    }
+    if (this.remotePaused) {
+      dimBackground(ctx, w, h);
+      panel(ctx, w / 2 - 210, h / 2 - 78, 420, 156, { radius: 18, border: '#8be9fd55' });
+      ctx.fillStyle = '#8be9fd';
+      ctx.font = displayFont(20);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(t('pause.title'), w / 2, h / 2 - 24);
+      ctx.fillStyle = '#a8a8ba';
+      ctx.font = '14px system-ui, sans-serif';
+      ctx.fillText(t('coop.waitDecision'), w / 2, h / 2 + 26);
+      return;
     }
 
     // newbie hints on the first-ever run
     if (this.hintTimer > 0 && !this.levelUpChoices && !this.paused) {
-      const p = game.state.player;
+      const p = game.localPlayer;
       const px = w / 2 + (p.x - game.camera.x) * game.camera.zoom;
       const py = h / 2 + (p.y - game.camera.y) * game.camera.zoom;
       ctx.save();
@@ -550,7 +991,7 @@ class RunScene implements Scene {
     }
 
     // overlay pop-in: 0.15s fade+slide, clicks suppressed until nearly settled
-    const overlayActive = !!(this.chestReward || this.paused || this.levelUpChoices);
+    const overlayActive = !!(this.chestReward || this.paused || this.levelUpChoices || this.levelWaiting);
     const nowMs = performance.now();
     if (overlayActive && !this.overlayWas) this.overlayOpenAt = nowMs;
     this.overlayWas = overlayActive;
@@ -561,7 +1002,7 @@ class RunScene implements Scene {
     // chest reward overlay
     if (this.chestReward) {
       const r = this.chestReward;
-      const p = game.state.player;
+      const p = game.state.playerBySlot(this.chestOwnerSlot) ?? game.localPlayer;
       ctx.save();
       ctx.globalAlpha = ok;
       dimBackground(ctx, w, h);
@@ -602,9 +1043,32 @@ class RunScene implements Scene {
 
         const scrapValue = Math.max(1, Math.round((r.kind === 'weapon' ? r.weapon.price : r.item.basePrice) * 0.8));
         const canTake = r.kind !== 'weapon' || (p.canUseWeapon(r.weapon) && (p.canAddWeapon() || p.weapons.some((wi) => wi.def.id === r.weapon.id && wi.tier < MAX_TIER)));
-        if (button(ctx, ui, 34, 226, pw - 48, 48, t('chest.take'), { primary: true, enabled: canTake })) this.chestAction = 'take';
-        if (button(ctx, ui, 34, 284, pw - 48, 40, t('chest.scrap', scrapValue), { icon: 'i_gem' })) this.chestAction = 'scrap';
+        const localOwnsChoice = this.chestOwnerSlot === game.localPlayerSlot;
+        const alreadySubmitted = game.sessionRole === 'guest'
+          && this.guestChestSubmittedRevision === this.chestPhaseRevision;
+        if (localOwnsChoice && !alreadySubmitted) {
+          if (button(ctx, ui, 34, 226, pw - 48, 48, t('chest.take'), { primary: true, enabled: canTake })) this.chestAction = 'take';
+          if (button(ctx, ui, 34, 284, pw - 48, 40, t('chest.scrap', scrapValue), { icon: 'i_gem' })) this.chestAction = 'scrap';
+        } else {
+          ctx.fillStyle = '#a8a8ba';
+          ctx.font = 'bold 14px system-ui, sans-serif';
+          ctx.fillText(t('coop.waitDecision'), cx, 264, pw - 48);
+        }
       });
+      ctx.restore();
+    }
+
+    if (this.levelWaiting && !this.levelUpChoices) {
+      ctx.save();
+      ctx.globalAlpha = ok;
+      dimBackground(ctx, w, h);
+      ctx.translate(0, (1 - ok) * 16);
+      panel(ctx, w / 2 - 210, h / 2 - 78, 420, 156, { radius: 18, border: '#8be9fd55' });
+      ctx.fillStyle = '#8be9fd';
+      ctx.font = displayFont(18);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(t('coop.waitDecision'), w / 2, h / 2);
       ctx.restore();
     }
 

@@ -1,5 +1,6 @@
 import { ENEMIES, type EnemyDef } from '../data/enemies';
 import { getEndlessWaveScaling } from '../data/endless';
+import type { PlayerSlot } from '../multiplayer/types';
 
 let nextUid = 1;
 
@@ -21,6 +22,7 @@ export class Enemy {
   burnT = 0;
   burnDps = 0;
   burnTick = 0;
+  burnOwnerPlayerSlot: PlayerSlot | null = null;
   slowT = 0;
   slowPct = 0;
   freezeT = 0;
@@ -77,6 +79,7 @@ export class Enemy {
     this.burnT = 0;
     this.burnDps = 0;
     this.burnTick = 0;
+    this.burnOwnerPlayerSlot = null;
     this.slowT = 0;
     this.slowPct = 0;
     this.freezeT = 0;

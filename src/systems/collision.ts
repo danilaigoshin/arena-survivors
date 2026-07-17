@@ -39,8 +39,20 @@ function explodeProjectile(state: RunState, pr: Projectile, def: WeaponDef, proj
     const rr = radius + e.radius;
     if (dist2(e.x, e.y, pr.x, pr.y) > rr * rr) return;
     norm(e.x - pr.x, e.y - pr.y, dir);
-    damageEnemy(state, e, pr.damage, pr.crit, dir.x * 220, dir.y * 220, '#ff9a45', pr.x, pr.y);
-    applyWeaponStatus(e, projectile.status, pr.damage / Math.max(1, def.damage));
+    damageEnemy(
+      state,
+      e,
+      pr.damage,
+      pr.crit,
+      dir.x * 220,
+      dir.y * 220,
+      '#ff9a45',
+      pr.x,
+      pr.y,
+      0,
+      { ownerPlayerSlot: pr.ownerPlayerSlot, x: pr.x, y: pr.y },
+    );
+    applyWeaponStatus(e, projectile.status, pr.damage / Math.max(1, def.damage), pr.ownerPlayerSlot);
   });
   if (!child && explosion.clusterCount && explosion.clusterDamageScale && explosion.clusterRadius) {
     for (let i = 0; i < explosion.clusterCount; i++) {
@@ -57,6 +69,7 @@ function explodeProjectile(state: RunState, pr: Projectile, def: WeaponDef, proj
         pr.crit,
         pr.style,
         1,
+        pr.ownerPlayerSlot,
       );
     }
   }
@@ -116,7 +129,20 @@ function redirectRicochet(state: RunState, pr: Projectile, hitX: number, hitY: n
   if ((ricochet.branches ?? 1) > 1 && pr.variant === 0 && second >= 0) {
     const other = state.enemies.items[second];
     norm(other.x - hitX, other.y - hitY, dir);
-    const clone = state.spawnProjectile(hitX + dir.x * 8, hitY + dir.y * 8, dir.x * speed, dir.y * speed, pr.damage, 0, 2.5, true, pr.crit, pr.style, 3);
+    const clone = state.spawnProjectile(
+      hitX + dir.x * 8,
+      hitY + dir.y * 8,
+      dir.x * speed,
+      dir.y * speed,
+      pr.damage,
+      0,
+      2.5,
+      true,
+      pr.crit,
+      pr.style,
+      3,
+      pr.ownerPlayerSlot,
+    );
     clone.remainingBounces = pr.remainingBounces;
     for (let i = 0; i < pr.hitCount; i++) clone.hitUids[i] = pr.hitUids[i];
     clone.hitCount = pr.hitCount;
@@ -126,9 +152,9 @@ function redirectRicochet(state: RunState, pr: Projectile, hitX: number, hitY: n
 }
 
 export function updateProjectiles(state: RunState, dt: number): void {
-  const p = state.player;
   for (let i = state.projectiles.count - 1; i >= 0; i--) {
     const pr = state.projectiles.items[i];
+    const owner = pr.ownerPlayerSlot === null ? null : state.playerBySlot(pr.ownerPlayerSlot);
     const def = pr.friendly ? WEAPON_INDEX[pr.style] : undefined;
     const projectile = def?.projectile;
     const boomerang = projectile?.boomerang;
@@ -138,11 +164,20 @@ export function updateProjectiles(state: RunState, dt: number): void {
       pr.trailTimer -= dt;
       if (pr.trailTimer <= 0) {
         pr.trailTimer = 0.08;
-        spawnTrailZone(state, pr.style, pr.x, pr.y, boomerang.trailBurnDps * (pr.damage / Math.max(1, def!.damage)), boomerang.trailDuration ?? 2);
+        spawnTrailZone(
+          state,
+          pr.style,
+          pr.x,
+          pr.y,
+          boomerang.trailBurnDps * (pr.damage / Math.max(1, def!.damage)),
+          boomerang.trailDuration ?? 2,
+          pr.ownerPlayerSlot,
+        );
       }
     }
     if (boomerang?.outboundRange && pr.returning) {
-      norm(p.x - pr.x, p.y - pr.y, dir);
+      const target = owner ?? state.players[0];
+      norm(target.x - pr.x, target.y - pr.y, dir);
       pr.vx = dir.x * boomerang.returnSpeed;
       pr.vy = dir.y * boomerang.returnSpeed;
     }
@@ -157,7 +192,8 @@ export function updateProjectiles(state: RunState, dt: number): void {
       pr.hitCount = 0;
       playSfx('return');
     }
-    if (boomerang && pr.returning && dist2(p.x, p.y, pr.x, pr.y) <= (p.radius + 10) ** 2) {
+    const returnTarget = owner ?? state.players[0];
+    if (boomerang && pr.returning && dist2(returnTarget.x, returnTarget.y, pr.x, pr.y) <= (returnTarget.radius + 10) ** 2) {
       state.projectiles.free(i);
       continue;
     }
@@ -192,8 +228,20 @@ export function updateProjectiles(state: RunState, dt: number): void {
           return;
         }
         norm(pr.vx, pr.vy, dir);
-        damageEnemy(state, e, pr.damage, pr.crit, dir.x * 140, dir.y * 140, undefined, pr.prevX, pr.prevY);
-        if (def && projectile) applyWeaponStatus(e, projectile.status, pr.damage / Math.max(1, def.damage));
+        damageEnemy(
+          state,
+          e,
+          pr.damage,
+          pr.crit,
+          dir.x * 140,
+          dir.y * 140,
+          undefined,
+          pr.prevX,
+          pr.prevY,
+          0,
+          { ownerPlayerSlot: pr.ownerPlayerSlot, x: pr.prevX, y: pr.prevY },
+        );
+        if (def && projectile) applyWeaponStatus(e, projectile.status, pr.damage / Math.max(1, def.damage), pr.ownerPlayerSlot);
         if (boomerang) {
           rememberProjectileHit(pr, e.uid);
           return;
@@ -209,11 +257,14 @@ export function updateProjectiles(state: RunState, dt: number): void {
       });
       if (dead) state.projectiles.free(i);
     } else {
-      const rr = p.radius + pr.radius;
-      if (dist2(p.x, p.y, pr.x, pr.y) <= rr * rr) {
-        damagePlayer(state, pr.damage);
-        if (pr.style === 'frost') p.slowT = 1.5;
-        state.projectiles.free(i);
+      for (const player of state.alivePlayers()) {
+        const rr = player.radius + pr.radius;
+        if (dist2(player.x, player.y, pr.x, pr.y) <= rr * rr) {
+          damagePlayer(state, player, pr.damage);
+          if (pr.style === 'frost') player.slowT = 1.5;
+          state.projectiles.free(i);
+          break;
+        }
       }
     }
   }
@@ -250,15 +301,16 @@ export function separateEnemies(state: RunState): void {
 }
 
 export function enemyContactDamage(state: RunState): void {
-  const p = state.player;
-  if (p.iframes > 0) return;
-  state.grid.queryCircle(p.x, p.y, p.radius + 64, (i) => {
-    if (p.iframes > 0) return;
-    const e = state.enemies.items[i];
-    if (!e.active || e.hp <= 0 || e.spawnT > 0) return;
-    const rr = e.radius + p.radius;
-    if (dist2(e.x, e.y, p.x, p.y) <= rr * rr) {
-      damagePlayer(state, e.contactDamage);
-    }
-  });
+  for (const player of state.alivePlayers()) {
+    if (player.iframes > 0) continue;
+    state.grid.queryCircle(player.x, player.y, player.radius + 64, (i) => {
+      if (player.iframes > 0) return;
+      const e = state.enemies.items[i];
+      if (!e.active || e.hp <= 0 || e.spawnT > 0) return;
+      const rr = e.radius + player.radius;
+      if (dist2(e.x, e.y, player.x, player.y) <= rr * rr) {
+        damagePlayer(state, player, e.contactDamage);
+      }
+    });
+  }
 }

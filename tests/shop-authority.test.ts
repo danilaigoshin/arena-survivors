@@ -1,0 +1,127 @@
+import { describe, expect, it } from 'vitest';
+import { ITEMS } from '../src/data/items';
+import { weaponById } from '../src/data/weapons';
+import { WeaponInstance } from '../src/entities/weapon';
+import {
+  applyShopCommand,
+  type AuthoritativeShopPhase,
+} from '../src/multiplayer/shopAuthority';
+import { Player } from '../src/entities/player';
+import { RunState } from '../src/state';
+import type { ShopState } from '../src/systems/shop';
+import { availableShopWeapons } from '../src/systems/shop';
+import { StaticPlayerProfile } from '../src/core/playerProfile';
+import { CHARACTERS } from '../src/data/characters';
+import { WEAPONS } from '../src/data/weapons';
+
+function shop(price: number): ShopState {
+  return {
+    offers: [{ kind: 'item', item: ITEMS[0], price, sold: false }],
+    rerollCost: 3,
+    rerollCount: 0,
+  };
+}
+
+function setup(materials = 10): { state: RunState; phase: AuthoritativeShopPhase } {
+  const players = [new Player(0), new Player(1)] as const;
+  for (const player of players) {
+    player.weapons.push(new WeaponInstance(weaponById('pistol'), 0));
+    player.recomputeStats();
+  }
+  const state = new RunState([...players]);
+  state.squad.materials = materials;
+  return {
+    state,
+    phase: {
+      phaseRevision: 7,
+      shops: [shop(8), shop(8)],
+      ready: [false, false],
+      discount: 1,
+    },
+  };
+}
+
+describe('authoritative co-op shop', () => {
+  it('serializes competing purchases against the shared wallet', () => {
+    const { state, phase } = setup(10);
+    expect(applyShopCommand(state, phase, {
+      type: 'buy',
+      phaseRevision: 7,
+      slot: 0,
+      offerIndex: 0,
+    })).toMatchObject({ accepted: true });
+    expect(state.squad.materials).toBe(2);
+    expect(applyShopCommand(state, phase, {
+      type: 'buy',
+      phaseRevision: 7,
+      slot: 1,
+      offerIndex: 0,
+    })).toEqual({ accepted: false, reason: 'unaffordable' });
+    expect(state.squad.materials).toBe(2);
+    expect(state.players[0].items).toHaveLength(1);
+    expect(state.players[1].items).toHaveLength(0);
+  });
+
+  it('rejects stale commands without mutation', () => {
+    const { state, phase } = setup();
+    expect(applyShopCommand(state, phase, {
+      type: 'buy',
+      phaseRevision: 6,
+      slot: 0,
+      offerIndex: 0,
+    })).toEqual({ accepted: false, reason: 'stale' });
+    expect(state.squad.materials).toBe(10);
+    expect(phase.shops[0].offers[0].sold).toBe(false);
+  });
+
+  it('starts only after both players are ready', () => {
+    const { state, phase } = setup();
+    expect(applyShopCommand(state, phase, {
+      type: 'ready',
+      phaseRevision: 7,
+      slot: 0,
+      ready: true,
+    })).toEqual({ accepted: true, startNextWave: false });
+    expect(applyShopCommand(state, phase, {
+      type: 'ready',
+      phaseRevision: 7,
+      slot: 1,
+      ready: true,
+    })).toEqual({ accepted: true, startNextWave: true });
+  });
+
+  it('credits a personal weapon sale to the shared wallet', () => {
+    const { state, phase } = setup(0);
+    state.players[1].weapons.push(new WeaponInstance(weaponById('smg'), 1));
+    expect(applyShopCommand(state, phase, {
+      type: 'sell',
+      phaseRevision: 7,
+      slot: 1,
+      weaponSlot: 1,
+    })).toMatchObject({ accepted: true });
+    expect(state.players[1].weapons).toHaveLength(1);
+    expect(state.squad.materials).toBeGreaterThan(0);
+  });
+
+  it('filters shop weapons by the personal class and unlock profile', () => {
+    const lockedWeapon = WEAPONS.find((weapon) => weapon.unlockCost && !weapon.evolved)!;
+    const lockedProfilePlayer = new Player(0, new StaticPlayerProfile());
+    expect(availableShopWeapons(lockedProfilePlayer).map((weapon) => weapon.id))
+      .not.toContain(lockedWeapon.id);
+
+    const unlockedProfilePlayer = new Player(0, new StaticPlayerProfile({
+      perkLevels: {},
+      unlockedIds: [lockedWeapon.id],
+    }));
+    expect(availableShopWeapons(unlockedProfilePlayer).map((weapon) => weapon.id))
+      .toContain(lockedWeapon.id);
+
+    const knight = new Player(0, new StaticPlayerProfile({
+      perkLevels: {},
+      unlockedIds: WEAPONS.map((weapon) => weapon.id),
+    }));
+    knight.setCharacter(CHARACTERS.find((character) => character.id === 'knight')!);
+    expect(availableShopWeapons(knight).every((weapon) => knight.canUseWeapon(weapon))).toBe(true);
+    expect(availableShopWeapons(knight).some((weapon) => weapon.id === 'smg')).toBe(false);
+  });
+});
