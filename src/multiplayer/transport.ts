@@ -20,6 +20,15 @@ function subscribe<T extends unknown[]>(callbacks: Set<Callback<T>>, callback: C
   return () => callbacks.delete(callback);
 }
 
+export function snapshotPayloadBuffer(data: unknown): ArrayBuffer | null {
+  if (data instanceof ArrayBuffer) return data;
+  // Trystero 0.25 reconstructs binary actions as Uint8Array views.
+  if (!ArrayBuffer.isView(data)) return null;
+  const bytes = new Uint8Array(data.byteLength);
+  bytes.set(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
+  return bytes.buffer;
+}
+
 export class TrysteroTransport implements Transport {
   private readonly controlCallbacks = new Set<Callback<[string, unknown]>>();
   private readonly eventCallbacks = new Set<Callback<[string, unknown]>>();
@@ -33,7 +42,7 @@ export class TrysteroTransport implements Transport {
   private constructor(private readonly room: Room) {
     this.control = room.makeAction('control');
     this.events = room.makeAction('events');
-    this.snapshot = room.makeAction<ArrayBuffer>('snapshot');
+    this.snapshot = room.makeAction<ArrayBuffer | ArrayBufferView>('snapshot');
     this.control.onMessage = (message, { peerId }) => {
       for (const callback of this.controlCallbacks) callback(peerId, message);
     };
@@ -41,8 +50,9 @@ export class TrysteroTransport implements Transport {
       for (const callback of this.eventCallbacks) callback(peerId, message);
     };
     this.snapshot.onMessage = (data, { peerId }) => {
-      if (!(data instanceof ArrayBuffer)) return;
-      for (const callback of this.snapshotCallbacks) callback(peerId, data);
+      const buffer = snapshotPayloadBuffer(data);
+      if (!buffer) return;
+      for (const callback of this.snapshotCallbacks) callback(peerId, buffer);
     };
     room.onPeerJoin = (peerId) => {
       for (const callback of this.peerCallbacks) callback(peerId, 'joined');

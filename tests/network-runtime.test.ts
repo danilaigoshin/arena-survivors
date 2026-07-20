@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { GameplayEventJournal, GameplayEventReceiver } from '../src/multiplayer/events';
 import { GuestPrediction } from '../src/multiplayer/prediction';
 import type { Transport } from '../src/multiplayer/transport';
-import { LatestSnapshotSender } from '../src/multiplayer/transport';
+import { LatestSnapshotSender, snapshotPayloadBuffer } from '../src/multiplayer/transport';
 import { Player } from '../src/entities/player';
 import { RemoteInputProvider } from '../src/systems/playerMovement';
 import { setPresentationEventSink } from '../src/multiplayer/presentationBus';
@@ -100,6 +100,17 @@ describe('network runtime helpers', () => {
         color: '#fff',
       }],
     }).events).toEqual([]);
+  });
+
+  it('normalizes Trystero typed-array snapshot payloads', () => {
+    const direct = new ArrayBuffer(2);
+    expect(snapshotPayloadBuffer(direct)).toBe(direct);
+
+    const packet = new Uint8Array([99, 1, 2, 3, 99]);
+    const normalized = snapshotPayloadBuffer(packet.subarray(1, 4));
+    expect(normalized).toBeInstanceOf(ArrayBuffer);
+    expect([...new Uint8Array(normalized!)]).toEqual([1, 2, 3]);
+    expect(snapshotPayloadBuffer({ byteLength: 3 })).toBeNull();
   });
 
   it('keeps only the latest pending snapshot while a send is active', async () => {
