@@ -1,7 +1,7 @@
 import { CHARACTERS } from './characters';
 import { EVOLUTIONS } from './evolutions';
 import { ITEMS } from './items';
-import { DICTS } from './locales';
+import { DICTS, hasExplicitTranslation } from './locales';
 import { WEAPON_CLASS, type WeaponClassId } from './sets';
 import { WEAPONS } from './weapons';
 import { ABILITY_AUGMENTS } from './abilityAugments';
@@ -79,6 +79,13 @@ export function validateGameContent(): string[] {
 
   for (const key of Object.keys(DICTS.ru)) {
     if (!DICTS.en[key]) problems.push(`en: missing ${key}`);
+  }
+  const menuKeys = Object.keys(DICTS.ru).filter((key) => key.startsWith('menu.'));
+  for (const lang of Object.keys(DICTS)) {
+    if (lang === 'ru' || lang === 'en') continue;
+    for (const key of menuKeys) {
+      if (!hasExplicitTranslation(lang, key)) problems.push(`${lang}: missing explicit ${key}`);
+    }
   }
 
   for (const [lang, dict] of Object.entries(DICTS)) {

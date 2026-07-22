@@ -860,13 +860,19 @@ const en: Dict = {
   'obj:hunter': 'Purge', 'obj:collector': 'Supply Run', 'obj:hold': 'Hold the Zone',
 };
 
+const explicitTranslations = new WeakMap<Dict, ReadonlySet<string>>();
+
 /** Helper: build a language dict by overriding EN (content) with local UI+content strings. */
 function fromEn(over: Dict): Dict {
-  return { ...en, ...over };
+  const dict = { ...en, ...over };
+  explicitTranslations.set(dict, new Set(Object.keys(over)));
+  return dict;
 }
 
 const es = fromEn({
-  'menu.play': 'JUGAR', 'menu.workshop': 'TALLER · {0}', 'menu.tagline': 'SOBREVIVE 20 OLEADAS Y MATA AL SEÑOR',
+  'menu.play': 'JUGAR', 'menu.continue': 'CONTINUAR · OLEADA {0}', 'menu.newRun': 'NUEVA PARTIDA',
+  'menu.coop': 'COOPERATIVO', 'menu.workshop': 'TALLER · {0}', 'menu.workshopShort': 'MEJORAS · {0}',
+  'menu.collection': 'COLECCIÓN', 'menu.tagline': 'SOBREVIVE 20 OLEADAS Y MATA AL SEÑOR',
   'menu.hint': 'WASD / flechas — mover · las armas disparan solas · M — sonido',
   'menu.hintTouch': 'Mitad derecha — joystick · abajo-izquierda — habilidad',
   'menu.records': 'Partidas: {0} · Victorias: {1} · Mejor oleada: {2} · Récord: {3}',
@@ -965,7 +971,9 @@ const es = fromEn({
 });
 
 const de = fromEn({
-  'menu.play': 'SPIELEN', 'menu.workshop': 'WERKSTATT · {0}', 'menu.tagline': 'ÜBERLEBE 20 WELLEN, BESIEGE DEN FÜRSTEN',
+  'menu.play': 'SPIELEN', 'menu.continue': 'WEITER · WELLE {0}', 'menu.newRun': 'NEUER LAUF',
+  'menu.coop': 'KOOP', 'menu.workshop': 'WERKSTATT · {0}', 'menu.workshopShort': 'WERKSTATT · {0}',
+  'menu.collection': 'SAMMLUNG', 'menu.tagline': 'ÜBERLEBE 20 WELLEN, BESIEGE DEN FÜRSTEN',
   'menu.hint': 'WASD / Pfeile — laufen · Waffen feuern selbst · M — Ton',
   'menu.hintTouch': 'Rechte Bildschirmhälfte — Joystick · unten links — Fähigkeit',
   'menu.records': 'Läufe: {0} · Siege: {1} · Beste Welle: {2} · Kill-Rekord: {3}',
@@ -1064,7 +1072,9 @@ const de = fromEn({
 });
 
 const fr = fromEn({
-  'menu.play': 'JOUER', 'menu.workshop': 'ATELIER · {0}', 'menu.tagline': 'SURVIS À 20 VAGUES ET TUE LE SUZERAIN',
+  'menu.play': 'JOUER', 'menu.continue': 'CONTINUER · VAGUE {0}', 'menu.newRun': 'NOUVELLE PARTIE',
+  'menu.coop': 'COOP', 'menu.workshop': 'ATELIER · {0}', 'menu.workshopShort': 'ATELIER · {0}',
+  'menu.collection': 'COLLECTION', 'menu.tagline': 'SURVIS À 20 VAGUES ET TUE LE SUZERAIN',
   'menu.hint': 'WASD / flèches — bouger · les armes tirent seules · M — son',
   'menu.hintTouch': 'Moitié droite — joystick · en bas à gauche — capacité',
   'menu.records': 'Parties : {0} · Victoires : {1} · Meilleure vague : {2} · Record : {3}',
@@ -1163,7 +1173,9 @@ const fr = fromEn({
 });
 
 const pt = fromEn({
-  'menu.play': 'JOGAR', 'menu.workshop': 'OFICINA · {0}', 'menu.tagline': 'SOBREVIVA A 20 ONDAS E MATE O SOBERANO',
+  'menu.play': 'JOGAR', 'menu.continue': 'CONTINUAR · ONDA {0}', 'menu.newRun': 'NOVA PARTIDA',
+  'menu.coop': 'COOPERATIVO', 'menu.workshop': 'OFICINA · {0}', 'menu.workshopShort': 'MELHORIAS · {0}',
+  'menu.collection': 'COLEÇÃO', 'menu.tagline': 'SOBREVIVA A 20 ONDAS E MATE O SOBERANO',
   'menu.hint': 'WASD / setas — mover · as armas atiram sozinhas · M — som',
   'menu.hintTouch': 'Metade direita — joystick · embaixo à esquerda — habilidade',
   'menu.records': 'Partidas: {0} · Vitórias: {1} · Melhor onda: {2} · Recorde: {3}',
@@ -1262,7 +1274,9 @@ const pt = fromEn({
 });
 
 const zh = fromEn({
-  'menu.play': '开始游戏', 'menu.workshop': '工坊 · {0}', 'menu.tagline': '活过20波，击杀霸主',
+  'menu.play': '开始游戏', 'menu.continue': '继续 · 第 {0} 波', 'menu.newRun': '新游戏',
+  'menu.coop': '合作模式', 'menu.workshop': '工坊 · {0}', 'menu.workshopShort': '强化 · {0}',
+  'menu.collection': '收藏', 'menu.tagline': '活过20波，击杀霸主',
   'menu.hint': 'WASD / 方向键移动 · 武器自动攻击 · M 声音',
   'menu.hintTouch': '屏幕右半边——摇杆 · 左下角——技能',
   'menu.records': '游戏次数：{0} · 胜利：{1} · 最佳波次：{2} · 击杀纪录：{3}',
@@ -1361,7 +1375,9 @@ const zh = fromEn({
 });
 
 const ja = fromEn({
-  'menu.play': 'プレイ', 'menu.workshop': '工房 · {0}', 'menu.tagline': '20ウェーブを生き延び、覇王を倒せ',
+  'menu.play': 'プレイ', 'menu.continue': '続ける · ウェーブ {0}', 'menu.newRun': 'ニューゲーム',
+  'menu.coop': '協力プレイ', 'menu.workshop': '工房 · {0}', 'menu.workshopShort': '強化 · {0}',
+  'menu.collection': 'コレクション', 'menu.tagline': '20ウェーブを生き延び、覇王を倒せ',
   'menu.hint': 'WASD / 矢印キーで移動 · 武器は自動攻撃 · M でサウンド',
   'menu.hintTouch': '画面右半分——スティック · 左下——アビリティ',
   'menu.records': 'プレイ: {0} · 勝利: {1} · 最高ウェーブ: {2} · 撃破記録: {3}',
@@ -1460,3 +1476,11 @@ const ja = fromEn({
 });
 
 export const DICTS: Record<string, Dict> = { ru, en, es, de, fr, pt, zh, ja };
+
+/** Whether a locale owns a translation instead of receiving the English fallback. */
+export function hasExplicitTranslation(lang: string, key: string): boolean {
+  const dict = DICTS[lang];
+  if (!dict) return false;
+  if (lang === 'ru' || lang === 'en') return Object.hasOwn(dict, key);
+  return explicitTranslations.get(dict)?.has(key) === true;
+}
