@@ -180,23 +180,30 @@ class MenuScene implements Scene {
 
     // button stack
     const by = h * 0.45;
+    const menuWidth = Math.min(460, w - 72);
+    const menuX = w / 2 - menuWidth / 2;
+    const menuGap = 12;
     const checkpoint = loadCheckpoint();
     if (checkpoint) {
-      if (button(ctx, ui, w / 2 - 218, by, 280, 62, tt('menu.continue', checkpoint.wave), { primary: true, fontSize: 17 })) {
+      const continueWidth = Math.round((menuWidth - menuGap) * 0.66);
+      const newRunWidth = menuWidth - menuGap - continueWidth;
+      if (button(ctx, ui, menuX, by, continueWidth, 62, tt('menu.continue', checkpoint.wave), { primary: true, fontSize: 17 })) {
         this.goContinue = true;
       }
-      if (button(ctx, ui, w / 2 + 74, by, 144, 62, tt('menu.newRun'), { fontSize: 14 })) this.goCharSelect = true;
-    } else if (button(ctx, ui, w / 2 - 140, by, 280, 62, tt('menu.play'), { primary: true, fontSize: 21 })) {
+      if (button(ctx, ui, menuX + continueWidth + menuGap, by, newRunWidth, 62, tt('menu.newRun'), { fontSize: 14 })) this.goCharSelect = true;
+    } else if (button(ctx, ui, menuX, by, menuWidth, 62, tt('menu.play'), { primary: true, fontSize: 21 })) {
       this.goCharSelect = true;
     }
     const shards = loadMeta().shards;
-    if (button(ctx, ui, w / 2 - 140, by + 74, 280, 48, tt('menu.coop'))) {
+    if (button(ctx, ui, menuX, by + 74, menuWidth, 48, tt('menu.coop'))) {
       this.goCoop = true;
     }
-    if (button(ctx, ui, w / 2 - 140, by + 134, 136, 48, tt('menu.workshopShort', shards), { icon: 'i_shard', fontSize: 12 })) {
+    const workshopWidth = Math.round((menuWidth - menuGap) * 0.57);
+    const collectionWidth = menuWidth - menuGap - workshopWidth;
+    if (button(ctx, ui, menuX, by + 134, workshopWidth, 48, tt('menu.workshopShort', shards), { icon: 'i_shard', fontSize: 13 })) {
       this.goMeta = true;
     }
-    if (button(ctx, ui, w / 2 + 4, by + 134, 136, 48, tt('menu.collection'), { icon: 'i_star', fontSize: 12 })) {
+    if (button(ctx, ui, menuX + workshopWidth + menuGap, by + 134, collectionWidth, 48, tt('menu.collection'), { icon: 'i_star', fontSize: 13 })) {
       this.goCollection = true;
     }
 

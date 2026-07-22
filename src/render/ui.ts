@@ -185,6 +185,25 @@ export interface ButtonOpts {
   labelColor?: string;
 }
 
+function fittedButtonFontSize(
+  ctx: CanvasRenderingContext2D,
+  label: string,
+  width: number,
+  requestedSize: number,
+  hasIcon: boolean,
+): number {
+  if (!label) return requestedSize;
+  const minSize = Math.min(9, requestedSize);
+  let size = requestedSize;
+  while (size > minSize) {
+    ctx.font = `bold ${size}px system-ui, sans-serif`;
+    const iconSpace = hasIcon ? size + 11 : 0;
+    if (ctx.measureText(label).width + iconSpace <= width - 20) break;
+    size -= 0.5;
+  }
+  return size;
+}
+
 export function inRect(ui: UiInput, x: number, y: number, w: number, h: number): boolean {
   return ui.mx >= x && ui.mx <= x + w && ui.my >= y && ui.my <= y + h;
 }
@@ -240,7 +259,7 @@ export function button(
     ctx.stroke();
   }
   ctx.fillStyle = opts.labelColor ?? (!enabled ? '#666672' : opts.primary ? '#241a08' : '#ffffff');
-  const fs = opts.fontSize ?? 16;
+  const fs = fittedButtonFontSize(ctx, label, w, opts.fontSize ?? 16, !!opts.icon);
   ctx.font = `bold ${fs}px system-ui, sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
