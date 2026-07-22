@@ -66,11 +66,17 @@ class SettingsScene implements Scene {
     value: boolean,
     change: () => void,
   ): void {
+    ctx.save();
     ctx.fillStyle = '#c8c8dc';
     ctx.font = '14px system-ui, sans-serif';
     ctx.textAlign = 'left';
     ctx.fillText(label, x, y + 18);
-    if (button(ctx, ui, x + 224, y, 90, 36, value ? t('settings.on') : t('settings.off'), { primary: value, fontSize: 12 })) {
+    const clicked = button(ctx, ui, x + 224, y, 90, 36, value ? t('settings.on') : t('settings.off'), {
+      primary: value,
+      fontSize: 12,
+    });
+    ctx.restore();
+    if (clicked) {
       this.pending = change;
     }
   }
@@ -84,16 +90,50 @@ class SettingsScene implements Scene {
     value: number,
     change: (value: number) => void,
   ): void {
+    ctx.save();
     ctx.fillStyle = '#c8c8dc';
     ctx.font = '14px system-ui, sans-serif';
     ctx.textAlign = 'left';
     ctx.fillText(label, x, y + 18);
-    if (button(ctx, ui, x + 190, y, 36, 36, '−')) this.pending = () => change(Math.max(0, value - 0.1));
+    const decrease = button(ctx, ui, x + 190, y, 36, 36, '−');
     ctx.fillStyle = '#8be9fd';
     ctx.font = 'bold 13px system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText(`${Math.round(value * 100)}%`, x + 260, y + 18);
-    if (button(ctx, ui, x + 294, y, 36, 36, '+')) this.pending = () => change(Math.min(1, value + 0.1));
+    const increase = button(ctx, ui, x + 294, y, 36, 36, '+');
+    ctx.restore();
+    if (decrease) this.pending = () => change(Math.max(0, value - 0.1));
+    if (increase) this.pending = () => change(Math.min(1, value + 0.1));
+  }
+
+  private sectionTitle(
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    label: string,
+    color: string,
+  ): void {
+    ctx.save();
+    ctx.fillStyle = color;
+    ctx.font = 'bold 16px system-ui, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, x, y);
+    ctx.restore();
+  }
+
+  private gamepadHint(ctx: CanvasRenderingContext2D, x: number, y: number, maxWidth: number): void {
+    const parts = t('settings.gamepad').split(' · ');
+    const firstLine = parts.shift() ?? '';
+    const secondLine = parts.join(' · ');
+    ctx.save();
+    ctx.fillStyle = '#8a8aa6';
+    ctx.font = '12px system-ui, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(firstLine, x, y, maxWidth);
+    if (secondLine) ctx.fillText(secondLine, x, y + 17, maxWidth);
+    ctx.restore();
   }
 
   private renderContent(game: Game, ctx: CanvasRenderingContext2D, w: number, h: number, ui: UiInput): void {
@@ -113,10 +153,7 @@ class SettingsScene implements Scene {
     for (let i = 0; i < 3; i++) panel(ctx, startX + i * (colW + gap), top, colW, panelH, { radius: 16 });
 
     const x1 = startX + 14;
-    ctx.fillStyle = '#8be9fd';
-    ctx.font = 'bold 16px system-ui, sans-serif';
-    ctx.textAlign = 'left';
-    ctx.fillText(t('settings.audio'), x1, top + 28);
+    this.sectionTitle(ctx, x1, top + 28, t('settings.audio'), '#8be9fd');
     const setVolume = (key: 'masterVolume' | 'musicVolume' | 'sfxVolume', value: number): void => {
       updateSetting(key, value);
       syncAudioSettings();
@@ -125,9 +162,7 @@ class SettingsScene implements Scene {
     this.volumeRow(ctx, ui, x1, top + 98, t('settings.music'), settings.musicVolume, (value) => setVolume('musicVolume', value));
     this.volumeRow(ctx, ui, x1, top + 144, t('settings.sfx'), settings.sfxVolume, (value) => setVolume('sfxVolume', value));
 
-    ctx.fillStyle = '#ffd23e';
-    ctx.font = 'bold 16px system-ui, sans-serif';
-    ctx.fillText(t('settings.accessibility'), x1, top + 216);
+    this.sectionTitle(ctx, x1, top + 216, t('settings.accessibility'), '#ffd23e');
     this.boolRow(ctx, ui, x1, top + 238, t('settings.shake'), settings.screenShake, () => updateSetting('screenShake', !settings.screenShake));
     this.boolRow(ctx, ui, x1, top + 280, t('settings.flash'), settings.screenFlash, () => updateSetting('screenFlash', !settings.screenFlash));
     this.boolRow(ctx, ui, x1, top + 322, t('settings.numbers'), settings.damageNumbers, () => updateSetting('damageNumbers', !settings.damageNumbers));
@@ -135,48 +170,54 @@ class SettingsScene implements Scene {
     this.boolRow(ctx, ui, x1, top + 406, t('settings.contrast'), settings.highContrast, () => updateSetting('highContrast', !settings.highContrast));
 
     const x2 = startX + colW + gap + 14;
-    ctx.fillStyle = '#b18cff';
-    ctx.font = 'bold 16px system-ui, sans-serif';
-    ctx.fillText(t('settings.controls'), x2, top + 28);
+    this.sectionTitle(ctx, x2, top + 28, t('settings.controls'), '#b18cff');
     ACTIONS.forEach((action, index) => {
       const y = top + 52 + index * 48;
+      ctx.save();
       ctx.fillStyle = '#c8c8dc';
       ctx.font = '13px system-ui, sans-serif';
       ctx.textAlign = 'left';
       ctx.fillText(t(`settings.action.${action}`), x2, y + 18, 190);
-      if (button(ctx, ui, x2 + 205, y, 108, 36, this.waitingBinding === action ? '…' : readableKey(settings.bindings[action]), {
+      const clicked = button(ctx, ui, x2 + 205, y, 108, 36, this.waitingBinding === action ? '…' : readableKey(settings.bindings[action]), {
         primary: this.waitingBinding === action,
         fontSize: 12,
-      })) {
+      });
+      ctx.restore();
+      if (clicked) {
         this.waitingBinding = action;
         this.status = t('settings.pressKey');
       }
     });
-    ctx.fillStyle = '#8a8aa6';
-    ctx.font = '12px system-ui, sans-serif';
-    ctx.fillText(t('settings.gamepad'), x2, top + 408, colW - 28);
-    this.boolRow(ctx, ui, x2, top + 440, t('settings.quick'), settings.quickTransitions, () => updateSetting('quickTransitions', !settings.quickTransitions));
-    this.boolRow(ctx, ui, x2, top + 482, t('settings.fps'), settings.showFps, () => updateSetting('showFps', !settings.showFps));
+    this.gamepadHint(ctx, x2, top + 397, colW - 28);
+    this.boolRow(ctx, ui, x2, top + 436, t('settings.quick'), settings.quickTransitions, () => updateSetting('quickTransitions', !settings.quickTransitions));
+    this.boolRow(ctx, ui, x2, top + 478, t('settings.fps'), settings.showFps, () => updateSetting('showFps', !settings.showFps));
 
     const x3 = startX + (colW + gap) * 2 + 14;
-    ctx.fillStyle = '#8dff9a';
-    ctx.font = 'bold 16px system-ui, sans-serif';
-    ctx.fillText(t('settings.display'), x3, top + 28);
+    this.sectionTitle(ctx, x3, top + 28, t('settings.display'), '#8dff9a');
+    ctx.save();
     ctx.fillStyle = '#c8c8dc';
     ctx.font = '14px system-ui, sans-serif';
+    ctx.textAlign = 'left';
     ctx.fillText(t('settings.textScale'), x3, top + 70);
-    if (button(ctx, ui, x3 + 190, top + 52, 36, 36, '−')) this.pending = () => updateSetting('textScale', Math.max(0.85, settings.textScale - 0.1));
+    const decreaseText = button(ctx, ui, x3 + 190, top + 52, 36, 36, '−');
     ctx.fillStyle = '#8be9fd';
     ctx.font = 'bold 13px system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText(`${Math.round(settings.textScale * 100)}%`, x3 + 260, top + 70);
-    if (button(ctx, ui, x3 + 294, top + 52, 36, 36, '+')) this.pending = () => updateSetting('textScale', Math.min(1.25, settings.textScale + 0.1));
+    const increaseText = button(ctx, ui, x3 + 294, top + 52, 36, 36, '+');
+    ctx.restore();
+    if (decreaseText) this.pending = () => updateSetting('textScale', Math.max(0.85, settings.textScale - 0.1));
+    if (increaseText) this.pending = () => updateSetting('textScale', Math.min(1.25, settings.textScale + 0.1));
     const filters = ['none', 'deuteranopia', 'tritanopia'] as const;
     const nextFilter = filters[(filters.indexOf(settings.colorFilter) + 1) % filters.length];
+    ctx.save();
     ctx.textAlign = 'left';
     ctx.fillStyle = '#c8c8dc';
+    ctx.font = '14px system-ui, sans-serif';
     ctx.fillText(t('settings.color'), x3, top + 126);
-    if (button(ctx, ui, x3 + 150, top + 108, 164, 36, t(`settings.color.${settings.colorFilter}`), { fontSize: 11 })) {
+    const changeFilter = button(ctx, ui, x3 + 150, top + 108, 164, 36, t(`settings.color.${settings.colorFilter}`), { fontSize: 11 });
+    ctx.restore();
+    if (changeFilter) {
       this.pending = () => updateSetting('colorFilter', nextFilter);
     }
     if (button(ctx, ui, x3, top + 170, 314, 38, t('settings.fullscreen'))) {
@@ -188,9 +229,7 @@ class SettingsScene implements Scene {
       };
     }
 
-    ctx.fillStyle = '#ffd23e';
-    ctx.font = 'bold 16px system-ui, sans-serif';
-    ctx.fillText(t('settings.data'), x3, top + 246);
+    this.sectionTitle(ctx, x3, top + 246, t('settings.data'), '#ffd23e');
     if (button(ctx, ui, x3, top + 270, 150, 38, t('settings.copy'))) {
       void copyBackup().then((ok) => {
         if (!ok) window.prompt(t('settings.copyManual'), createBackupText());
