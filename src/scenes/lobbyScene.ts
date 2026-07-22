@@ -16,8 +16,9 @@ import {
 import { normalizeRoomCode } from '../multiplayer/protocol';
 import { menuScene } from './menu';
 import { runScene } from './run';
+import { consumeAnyKeyPress, isTouchDevice } from '../core/input';
 
-type LobbyMode = 'choose' | 'host' | 'guest';
+type LobbyMode = 'choose' | 'code' | 'host' | 'guest';
 type LobbyAction =
   | 'back'
   | 'host'
@@ -29,7 +30,17 @@ type LobbyAction =
   | 'ready'
   | 'start'
   | 'copy'
+  | 'paste'
   | null;
+
+const ROOM_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+
+function roomCharacterFromKey(code: string): string | null {
+  if (code.startsWith('Key') && code.length === 4) return code.slice(3);
+  if (code.startsWith('Digit') && code.length === 6) return code.slice(5);
+  if (code.startsWith('Numpad') && code.length === 7) return code.slice(6);
+  return null;
+}
 
 const availableCharacters = () => CHARACTERS.filter((character) => !character.unlockCost || isUnlocked(character.id));
 const localizedStatuses = new Set<SessionStatus>([
@@ -61,6 +72,8 @@ class LobbyScene implements Scene {
   private busy = false;
   private error = '';
   private session: NetworkSession | null = null;
+  private roomInput = '';
+  private copyStatus = '';
 
   onEnter(game: Game): void {
     if (!game.networkSession) {
@@ -68,15 +81,42 @@ class LobbyScene implements Scene {
       this.session = null;
       this.error = '';
       this.busy = false;
+      this.copyStatus = '';
+      const linkedCode = typeof location === 'undefined'
+        ? null
+        : normalizeRoomCode(new URL(location.href).searchParams.get('room') ?? '');
+      if (linkedCode) {
+        this.roomInput = linkedCode;
+        this.mode = 'code';
+      } else {
+        this.roomInput = '';
+      }
     }
   }
 
   update(game: Game, _dt: number): void {
+    if (this.mode === 'code' && !this.busy) {
+      const key = consumeAnyKeyPress();
+      if (key === 'Backspace') this.roomInput = this.roomInput.slice(0, -1);
+      else if (key === 'Escape') this.mode = 'choose';
+      else if (key === 'Enter' || key === 'NumpadEnter') this.action = 'join';
+      else if (key) {
+        const character = roomCharacterFromKey(key);
+        if (character && ROOM_ALPHABET.includes(character) && this.roomInput.length < 6) {
+          this.roomInput += character;
+        }
+      }
+    }
     const action = this.action;
     this.action = null;
     if (!action || this.busy) return;
 
     if (action === 'back') {
+      if (this.mode === 'code') {
+        this.mode = 'choose';
+        this.error = '';
+        return;
+      }
       const session = this.session;
       this.session = null;
       game.networkSession = null;
@@ -105,8 +145,18 @@ class LobbyScene implements Scene {
     }
 
     if (action === 'join') {
-      const entered = window.prompt(t('coop.enterCode'), '') ?? '';
-      const code = normalizeRoomCode(entered);
+      if (this.mode === 'choose') {
+        this.mode = 'code';
+        this.roomInput = '';
+        this.error = '';
+        if (isTouchDevice()) {
+          const entered = window.prompt(t('coop.enterCode'), '') ?? '';
+          const linkedCode = normalizeRoomCode(entered);
+          if (linkedCode) this.roomInput = linkedCode;
+        }
+        return;
+      }
+      const code = normalizeRoomCode(this.roomInput);
       if (!code) {
         this.error = t('coop.invalidCode');
         return;
@@ -120,6 +170,11 @@ class LobbyScene implements Scene {
           game.networkSession = session;
           game.sessionRole = 'guest';
           this.mode = 'guest';
+          if (typeof history !== 'undefined' && typeof location !== 'undefined') {
+            const cleanUrl = new URL(location.href);
+            cleanUrl.searchParams.delete('room');
+            history.replaceState(null, '', cleanUrl);
+          }
           session.onStarted = () => {
             runScene.enterWave(game);
             game.setScene(runScene, true);
@@ -129,6 +184,26 @@ class LobbyScene implements Scene {
           this.error = networkErrorText(error);
         })
         .finally(() => { this.busy = false; });
+      return;
+    }
+
+    if (action === 'paste' && this.mode === 'code') {
+      const clipboard = navigator.clipboard?.readText();
+      if (!clipboard) {
+        const entered = window.prompt(t('coop.enterCode'), '') ?? '';
+        const code = normalizeRoomCode(entered);
+        if (code) this.roomInput = code;
+        else if (entered) this.error = t('coop.invalidCode');
+        return;
+      }
+      this.busy = true;
+      void clipboard.then((value) => {
+        const code = normalizeRoomCode(value);
+        if (code) this.roomInput = code;
+        else this.error = t('coop.invalidCode');
+      }).catch(() => {
+        this.error = t('coop.pasteFailed');
+      }).finally(() => { this.busy = false; });
       return;
     }
 
@@ -153,7 +228,20 @@ class LobbyScene implements Scene {
       } else if (action === 'ready') {
         this.session.setReady(!this.session.host.ready);
       } else if (action === 'copy') {
-        void navigator.clipboard?.writeText(this.session.roomCode);
+        const invite = typeof location === 'undefined'
+          ? this.session.roomCode
+          : (() => {
+            const url = new URL(location.href);
+            url.searchParams.set('room', this.session!.roomCode);
+            url.hash = '';
+            return url.toString();
+          })();
+        const copied = navigator.clipboard?.writeText(invite);
+        if (copied) {
+          void copied.then(() => { this.copyStatus = t('coop.linkCopied'); }).catch(() => {
+            this.copyStatus = invite;
+          });
+        } else this.copyStatus = invite;
       } else if (action === 'start') {
         this.busy = true;
         void this.session.startRun(game).then((started) => {
@@ -196,6 +284,37 @@ class LobbyScene implements Scene {
       return;
     }
 
+    if (this.mode === 'code') {
+      ctx.fillStyle = '#9a9ab4';
+      ctx.font = '15px system-ui, sans-serif';
+      ctx.fillText(t('coop.enterCode'), width / 2, 105);
+      const boxSize = 54;
+      const gap = 10;
+      const total = boxSize * 6 + gap * 5;
+      const start = width / 2 - total / 2;
+      for (let i = 0; i < 6; i++) {
+        panel(ctx, start + i * (boxSize + gap), 150, boxSize, 64, {
+          radius: 10,
+          fill: i === this.roomInput.length ? '#292940' : '#171722',
+          border: i === this.roomInput.length ? '#8be9fd' : '#ffffff22',
+        });
+        ctx.fillStyle = this.roomInput[i] ? '#ffffff' : '#4a4a60';
+        ctx.font = displayFont(22);
+        ctx.fillText(this.roomInput[i] ?? '·', start + i * (boxSize + gap) + boxSize / 2, 182);
+      }
+      if (button(ctx, ui, width / 2 - 150, 244, 300, 56, t('coop.join'), {
+        primary: true,
+        enabled: this.roomInput.length === 6 && !this.busy,
+      })) this.action = 'join';
+      if (button(ctx, ui, width / 2 - 110, 316, 220, 44, t('coop.paste'), { enabled: !this.busy })) this.action = 'paste';
+      ctx.fillStyle = '#73738a';
+      ctx.font = '13px system-ui, sans-serif';
+      ctx.fillText(t('coop.linkHint'), width / 2, 390);
+      if (button(ctx, ui, width / 2 - 100, height - 70, 200, 46, t('hero.back'))) this.action = 'back';
+      if (this.error) this.statusText(ctx, width, this.error, '#ff7080');
+      return;
+    }
+
     const session = this.session;
     if (!session) return;
     const characters = availableCharacters();
@@ -227,6 +346,11 @@ class LobbyScene implements Scene {
           ? t('coop.waiting')
           : t(`coop.status.${session.status}`);
       ctx.fillText(status, width / 2, 398);
+      if (this.copyStatus) {
+        ctx.fillStyle = '#8dff9a';
+        ctx.font = '12px system-ui, sans-serif';
+        ctx.fillText(this.copyStatus, width / 2, 418, width - 160);
+      }
     } else if (session instanceof GuestSession) {
       ctx.fillStyle = '#9a9ab4';
       ctx.font = '14px system-ui, sans-serif';

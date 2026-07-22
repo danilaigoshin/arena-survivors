@@ -16,6 +16,8 @@ import type { PlayerProfile, PlayerSlot, SessionRole } from './multiplayer/types
 import { LocalInputProvider, RemoteInputProvider } from './systems/playerMovement';
 import type { PlayerInputState } from './multiplayer/types';
 import type { NetworkSession } from './multiplayer/session';
+import { applyCanvasAccessibility, loadSettings } from './core/settings';
+import { beginUiFrame, endUiFrame, resetUiFocus } from './render/ui';
 
 export interface Scene {
   update(game: Game, dt: number): void;
@@ -58,6 +60,7 @@ export class Game {
     this.ctx = canvas.getContext('2d')!;
     this.viewport = measureViewport();
     initInput(canvas, () => this.viewport);
+    applyCanvasAccessibility(canvas);
     const resize = () => {
       this.viewport = measureViewport();
       const { width, height, pixelRatio } = this.viewport;
@@ -108,11 +111,13 @@ export class Game {
   }
 
   setScene(scene: Scene, instant = false): void {
+    if (loadSettings().quickTransitions) instant = true;
     if (!this.scene || instant) {
       this.scene = scene;
       this.pendingScene = null;
       this.fadeT = 0;
       scene.onEnter?.(this);
+      resetUiFocus();
       return;
     }
     if (scene === this.scene || this.pendingScene) return;
@@ -140,6 +145,7 @@ export class Game {
     });
     this.localInput.reset();
     this.state = new RunState(players);
+    this.state.metrics.maxWeapons = [players[0]?.weapons.length ?? 0, players[1]?.weapons.length ?? 0];
     clearFx();
     this.camera.follow(this.localPlayer.x, this.localPlayer.y);
   }
@@ -158,6 +164,7 @@ export class Game {
           this.scene = this.pendingScene;
           this.pendingScene = null;
           this.scene.onEnter?.(this);
+          resetUiFocus();
         }
         if (!this.pendingScene && this.fadeT >= FADE_OUT + FADE_IN) this.fadeT = 0;
       }
@@ -201,7 +208,10 @@ export class Game {
         // An overlay may have opened during update; release an active joystick
         // before the next touch can arrive between animation frames.
         setJoystickEnabled(this.scene.wantsJoystick === true && this.scene.blocksJoystick !== true);
+        applyCanvasAccessibility(this.canvas);
+        beginUiFrame();
         this.scene.render(this, this.ctx);
+        endUiFrame();
       }
       if (!this.viewport.portraitBlocked && this.fadeT > 0) {
         this.prepareContext();

@@ -1,6 +1,6 @@
 import type { Game } from '../game';
 import { StaticPlayerProfile } from '../core/playerProfile';
-import { addShards, recordRun } from '../core/save';
+import { addShards, recordRun, type ProgressionGain } from '../core/save';
 import { CHARACTERS } from '../data/characters';
 import { DIFFICULTIES } from '../data/difficulty';
 import { applyPlayerMovement } from '../systems/playerMovement';
@@ -611,6 +611,7 @@ export class GuestSession extends BaseSession {
   private timeout: number | null = null;
   private readonly appliedResults = new Set<string>();
   lastEndResult: EndResult | null = null;
+  lastProgressionGain: ProgressionGain | null = null;
   private sessionId: string | null = null;
   returnToMenuRequested = false;
   onStarted: (() => void) | null = null;
@@ -840,6 +841,7 @@ export class GuestSession extends BaseSession {
     this.lastSnapshotReceivedAt = 0;
     this.phaseState = null;
     this.lastEndResult = null;
+    this.lastProgressionGain = null;
     this.returnToMenuRequested = false;
     this.metrics.phaseRevision = 0;
     game.sessionRole = 'guest';
@@ -862,7 +864,17 @@ export class GuestSession extends BaseSession {
     if (this.appliedResults.has(result.resultId)) return;
     this.appliedResults.add(result.resultId);
     this.lastEndResult = result;
-    recordRun(result.wave, result.kills, result.won);
+    this.lastProgressionGain = recordRun(result.wave, result.kills, result.won, {
+      wave: result.wave,
+      level: result.level,
+      kills: result.kills,
+      won: result.won,
+      difficultyId: result.difficultyId,
+      characterIds: result.characterIds,
+      weaponIds: result.weaponIds,
+      playerCount: result.playerCount,
+      metrics: result.metrics,
+    });
     addShards(result.shardsEarned);
   }
 

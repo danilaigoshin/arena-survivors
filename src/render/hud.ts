@@ -69,6 +69,26 @@ export function renderHud(ctx: CanvasRenderingContext2D, state: RunState, viewpo
   }
   ctx.restore();
 
+  // Coordinated abilities and nearby kills charge a shared co-op burst.
+  if (state.players.length === 2) {
+    const rw = 224;
+    const rx = viewW / 2 - rw / 2;
+    const ry = 76;
+    panel(ctx, rx, ry, rw, 36, {
+      radius: 10,
+      fill: '#151525dd',
+      border: state.resonanceActiveT > 0 ? '#b18cffaa' : '#8be9fd55',
+      glow: state.resonanceActiveT > 0 ? '#b18cff55' : undefined,
+    });
+    const active = state.resonanceActiveT > 0;
+    const fraction = active ? 1 : state.resonance / 100;
+    bar(ctx, rx + 10, ry + 18, rw - 20, 9, fraction, active ? ['#f0c8ff', '#8f55d8'] : ['#8be9fd', '#526ddf']);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = active ? '#efd8ff' : '#c8c8dc';
+    ctx.font = 'bold 10px system-ui, sans-serif';
+    ctx.fillText(active ? t('hud.resonanceActive', state.resonanceActiveT.toFixed(1)) : t('hud.resonance'), viewW / 2, ry + 9);
+  }
+
   // ── top-right: materials + kills ──
   const mw = 140;
   panel(ctx, viewW - mw - 14, 14, mw, 64, { radius: 14 });

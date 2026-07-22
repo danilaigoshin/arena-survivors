@@ -7,6 +7,8 @@ import { TALENTS } from '../data/talents';
 import { ABILITY_AUGMENTS } from '../data/abilityAugments';
 import { WAVE_CONTRACTS } from '../data/contracts';
 import { DIFFICULTIES } from '../data/difficulty';
+import { COSMETICS } from '../data/challenges';
+import { ROUTES } from '../data/routes';
 import { BASE_STATS } from '../entities/stats';
 import { normalizePlayerInput } from '../systems/playerMovement';
 import {
@@ -16,12 +18,15 @@ import {
   type SerializedPlayerProfile,
 } from './types';
 import type { BuildState, PhaseState, SerializedShopState } from './stateProtocol';
+import { normalizeRunMetrics, type RunMetrics } from '../core/runMetrics';
 
 export const NETWORK_APP_ID = `arena-survivors-v${NETWORK_VERSION}`;
 export const ROOM_CODE_LENGTH = 6;
 const ROOM_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 const ROOM_PATTERN = /^[0-9A-HJKMNP-TV-Z]{6}$/;
 const MAX_CONTROL_ARRAY = 128;
+const cosmeticIds = new Set<string>(COSMETICS.map((cosmetic) => cosmetic.id));
+const routeIds = new Set(ROUTES.map((route) => route.id));
 
 export interface HandshakeMessage {
   type: 'handshake';
@@ -108,6 +113,11 @@ export interface EndResult {
   won: boolean;
   difficultyId: string;
   shardsEarned: number;
+  level: number;
+  characterIds: string[];
+  weaponIds: string[];
+  playerCount: number;
+  metrics: RunMetrics;
 }
 
 export interface EndResultMessage {
@@ -254,6 +264,8 @@ function validBuildState(value: unknown): value is BuildState {
     || !Array.isArray(build.players)
     || build.players.length < 1
     || build.players.length > 2
+    || (build.routeIds !== undefined
+      && (!stringArray(build.routeIds, 3) || !build.routeIds.every((id) => routeIds.has(id))))
   ) return false;
   const slots = new Set<number>();
   return build.players.every((rawPlayer) => {
@@ -378,11 +390,11 @@ function parsePhaseState(value: unknown): PhaseState | null {
       };
     case 'progression':
       if (
-        (state.kind !== 'ability' && state.kind !== 'contract')
+        (state.kind !== 'ability' && state.kind !== 'contract' && state.kind !== 'route')
         || !stringArrayPair(state.choiceIds, 8)
         || !booleanPair(state.submitted)
         || !state.choiceIds.every((choices) => choices.every(
-          (id) => (state.kind === 'ability' ? augmentIds : contractIds).has(id),
+          (id) => (state.kind === 'ability' ? augmentIds : state.kind === 'route' ? routeIds : contractIds).has(id),
         ))
       ) return null;
       return {
@@ -418,7 +430,10 @@ export function normalizeSerializedProfile(value: unknown): SerializedPlayerProf
     perkLevels[id] = Math.max(0, Math.min(perk.costs.length, Math.floor(rawLevel)));
   }
   const unlockedIds = [...new Set(unlocked.filter((id) => unlockableIds.has(id)))];
-  return { perkLevels, unlockedIds };
+  const cosmeticId = typeof input.cosmeticId === 'string' && cosmeticIds.has(input.cosmeticId)
+    ? input.cosmeticId
+    : undefined;
+  return cosmeticId ? { perkLevels, unlockedIds, cosmeticId } : { perkLevels, unlockedIds };
 }
 
 export function parseNetworkInput(value: unknown): NetworkInput | null {
@@ -559,8 +574,34 @@ export function parseControlMessage(value: unknown): ControlMessage | null {
         || typeof result.difficultyId !== 'string'
         || !difficultyIds.has(result.difficultyId)
         || !safeSequence(result.shardsEarned)
+        || !safeSequence(result.level)
+        || result.level < 1
+        || !stringArray(result.characterIds, 2)
+        || result.characterIds.length !== result.playerCount
+        || !result.characterIds.every((id) => characterIds.has(id))
+        || !stringArray(result.weaponIds, 64)
+        || !result.weaponIds.every((id) => weaponIds.has(id))
+        || (result.playerCount !== 1 && result.playerCount !== 2)
+        || !record(result.metrics)
       ) return null;
-      return { type: 'end-result', version: NETWORK_VERSION, result: result as unknown as EndResult };
+      return {
+        type: 'end-result',
+        version: NETWORK_VERSION,
+        result: {
+          sessionId: result.sessionId,
+          resultId: result.resultId,
+          wave: result.wave,
+          kills: result.kills,
+          won: result.won,
+          difficultyId: result.difficultyId,
+          shardsEarned: result.shardsEarned,
+          level: result.level,
+          characterIds: [...result.characterIds],
+          weaponIds: [...new Set(result.weaponIds)],
+          playerCount: result.playerCount,
+          metrics: normalizeRunMetrics(result.metrics),
+        },
+      };
     }
     case 'end-receipt':
       return typeof message.resultId === 'string' && message.resultId.length > 0 && message.resultId.length <= 80

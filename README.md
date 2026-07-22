@@ -8,17 +8,19 @@ A pixel-art arena survival roguelite in the browser. Survive 20 waves, build you
 
 ## Features
 
-- **20-wave campaign** across 10 unique maps: meadows, graveyard, glacier, cinders, demon's lair… — each with its own palette, obstacles and atmosphere
+- **20-wave campaign** across 10 unique maps, split into chapters with route choices after bosses
 - **Weapons fire on their own** — your job is positioning and dodging
 - **Shop between waves**: weapon tiers I–IV by merging duplicates, selling, item rarities, a wandering trader with discounts
 - **Weapon specializations** chosen inside the shop at tier III: trade damage for speed or speed for damage without a raw-DPS upgrade
 - **Evolutions**: a tier-IV weapon + a catalyst item = a unique superweapon (Annihilator, Storm Blade…)
 - **4 heroes** with class-specific active abilities and permanent ability upgrades after bosses
 - **Mechanical talents** every fourth level, plus optional wave objectives and risk/reward contracts
-- **Meta progression**: shards from runs, permanent perks, weapon unlocks, records
+- **Meta progression**: shards, permanent perks, mastery, challenges, Codex discoveries and unlockable cosmetic auras
 - **Elite enemies, multi-phase bosses at waves 5/10/15/20, endless mode** after victory
 - **3 difficulty levels** and **8 interface languages**
-- **Two-player online co-op** with shared XP/materials and fully separate character builds
+- **Two-player online co-op (beta)** with invite links, shared XP/materials, squad Resonance and partial reward recovery after disconnects
+- First-run tutorial, full keyboard remapping and gamepad navigation, accessibility options, wave checkpoints and save backup/import
+- Installable PWA with offline solo play after the first successful load
 - Pixel art, animation and synthesized sound — everything drawn and generated in code, zero external assets
 
 ![Combat](docs/gameplay.png)
@@ -36,17 +38,19 @@ A pixel-art arena survival roguelite in the browser. Survive 20 waves, build you
 ## Online co-op
 
 Choose **Co-op** in the main menu. One player creates a room and shares the
-six-character code; the second player joins with that code. Both choose a hero
+invite link or six-character code; opening a link fills the code automatically. Both choose a hero
 and mark themselves ready, then the host starts the run.
 
 The host's browser is the authoritative game server and must keep the tab open.
 Co-op supports exactly two players. Reconnect, host migration, spectators and
-join-in-progress are not supported; losing the connection ends the run without
-meta rewards.
+join-in-progress are not supported. If the connection is lost, either player can
+bank a partial reward using the latest synchronized run state.
 
 Game data travels directly between players over an encrypted WebRTC
 DataChannel. Public Nostr relays only introduce the peers. No TURN server is
-bundled, so a connection may fail behind some NAT or firewall configurations.
+bundled in the public deployment, so a connection may fail behind some NAT or
+firewall configurations. The client supports optional TURN configuration; see
+[`docs/release-infrastructure.md`](docs/release-infrastructure.md).
 
 ## Run locally
 

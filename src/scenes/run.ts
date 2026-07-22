@@ -1,10 +1,10 @@
 import type { Game, Scene } from '../game';
 import { getWaveDef } from '../data/waves';
 import { FINAL_WAVE, ARENA_W, ARENA_H, WAVE_END_MATERIAL_DROP_MULT } from '../config';
-import { isDown, consumeKeyPress, isTouchDevice, pauseButtonCircle } from '../core/input';
+import { isDown, consumeActionPress, consumeKeyPress, isTouchDevice, pauseButtonCircle } from '../core/input';
 import { toggleMute, toggleMusic, isMuted, isMusicOn, setMusicIntensity } from '../render/audio';
-import { loadMeta } from '../core/save';
-import { button, dimBackground, fitToViewport, panel, renderFitted } from '../render/ui';
+import { loadMeta, markTutorial } from '../core/save';
+import { button, dimBackground, drawWrappedCentered as drawTutorialText, fitToViewport, panel, renderFitted } from '../render/ui';
 import { updateSpawner } from '../systems/spawner';
 import { updateEnemies } from '../systems/enemyAI';
 import { updateAreaEffects, updateEnemyStatuses, updateWeapons, damageEnemy } from '../systems/combat';
@@ -35,6 +35,10 @@ import { shopScene } from './shopScene';
 import { eventScene } from './eventScene';
 import { endScene } from './endScene';
 import { menuScene } from './menu';
+import { loadSettings } from '../core/settings';
+import { saveCheckpoint } from '../core/checkpoint';
+import { settingsScene } from './settingsScene';
+import { runTutorialForWave, TUTORIAL_STEPS, type TutorialStepId } from '../core/tutorial';
 import { createWaveObjective, failWaveObjective, updateWaveObjective } from '../systems/objectives';
 import { chance } from '../core/rng';
 import { applyPlayerMovement } from '../systems/playerMovement';
@@ -43,6 +47,7 @@ import type { PlayerSlot } from '../multiplayer/types';
 import { GuestSession, HostSession } from '../multiplayer/session';
 import { resetPlayersForWave } from '../systems/squad';
 import { updateBomberExplosions, updateFirePatches } from '../systems/hazards';
+import { claimDisconnectedRun, disconnectedRunReward } from '../core/disconnectRecovery';
 
 function drawPauseSlash(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number): void {
   ctx.save();
@@ -79,7 +84,7 @@ class RunScene implements Scene {
   private guestSubmittedRevision = 0;
   private levelWaiting = false;
   get blocksJoystick(): boolean {
-    return !!(this.levelUpChoices || this.levelWaiting || this.paused || this.remotePaused || this.chestReward);
+    return !!(this.levelUpChoices || this.levelWaiting || this.paused || this.remotePaused || this.chestReward || this.tutorialStep);
   }
   /** overlay pop-in: timestamp when the current overlay opened (ms) */
   private overlayOpenAt = 0;
@@ -88,7 +93,7 @@ class RunScene implements Scene {
   bannerTimer = 0;
   paused = false;
   hintTimer = 0;
-  private pauseAction: 'resume' | 'surrender' | 'mute' | 'music' | null = null;
+  private pauseAction: 'resume' | 'surrender' | 'mute' | 'music' | 'settings' | null = null;
   chestReward: ShopOffer | null = null;
   private chestAction: 'take' | 'scrap' | null = null;
   private chestOwnerSlot: PlayerSlot = 0;
@@ -98,6 +103,8 @@ class RunScene implements Scene {
   private connectionExit = false;
   private remotePaused = false;
   private ending = false;
+  private tutorialStep: TutorialStepId | null = null;
+  private tutorialDismiss = false;
 
   enterWave(game: Game): void {
     const s = game.state;
@@ -121,6 +128,8 @@ class RunScene implements Scene {
     this.guestChestSubmittedRevision = 0;
     this.remotePaused = false;
     this.ending = false;
+    this.tutorialStep = game.sessionRole === 'solo' ? runTutorialForWave(s.wave) : null;
+    this.tutorialDismiss = false;
     this.waveEndTimer = -1;
     this.paused = false;
     // newbie hints on the very first run
@@ -130,7 +139,7 @@ class RunScene implements Scene {
     s.projectiles.clear();
     s.areaEffects.clear();
     // fresh map every wave
-    const map = generateMap(s.wave);
+    const map = generateMap(s.wave, s.routeIds);
     s.theme = map.theme;
     s.obstacles = map.obstacles;
     s.floorCanvas = bakeFloor(s.theme, s.wave);
@@ -165,6 +174,7 @@ class RunScene implements Scene {
     s.waveMaterials = 0;
     s.objective = game.sessionRole === 'guest' ? null : createWaveObjective(s);
     game.camera.follow(game.localPlayer.x, game.localPlayer.y);
+    saveCheckpoint(game);
   }
 
   private virtualCardRect(i: number, count: number): [number, number, number, number] {
@@ -184,6 +194,7 @@ class RunScene implements Scene {
       if (this.connectionExit) {
         this.connectionExit = false;
         const session = game.networkSession;
+        claimDisconnectedRun(game);
         game.networkSession = null;
         game.sessionRole = 'solo';
         void session.close();
@@ -192,6 +203,20 @@ class RunScene implements Scene {
       return;
     }
     const activeHostSession = game.networkSession instanceof HostSession ? game.networkSession : null;
+    if (this.tutorialStep) {
+      if (this.tutorialDismiss || consumeKeyPress('Enter')) {
+        markTutorial(this.tutorialStep);
+        this.tutorialStep = null;
+        this.tutorialDismiss = false;
+        playSfx('click');
+      }
+      return;
+    }
+    if (this.levelUpChoices) {
+      for (let i = 0; i < this.levelUpChoices.length; i++) {
+        if (consumeKeyPress(`Digit${i + 1}`) || consumeKeyPress(`Numpad${i + 1}`)) this.levelUpAction = i;
+      }
+    }
     if (activeHostSession?.pausedByVisibility) this.paused = true;
     if (game.sessionRole === 'guest') {
       const session = game.networkSession;
@@ -218,7 +243,7 @@ class RunScene implements Scene {
     }
 
     // pause toggle (not while the level-up chooser is open)
-    if (consumeKeyPress('Escape') && !this.levelUpChoices) {
+    if (consumeActionPress('pause') && !this.levelUpChoices) {
       this.paused = !this.paused;
       if (activeHostSession) {
         if (this.paused) {
@@ -260,6 +285,10 @@ class RunScene implements Scene {
       }
       else if (a === 'mute') toggleMute();
       else if (a === 'music') toggleMusic();
+      else if (a === 'settings') {
+        settingsScene.open(this);
+        game.setScene(settingsScene);
+      }
       else if (a === 'surrender') {
         this.paused = false;
         this.beginEnd(game, false);
@@ -303,7 +332,7 @@ class RunScene implements Scene {
         && input.abilityPressSeq > this.lastAbilityPressSeq[player.slot]
         && player.abilityCd <= 0
       ) {
-        this.useAbility(player);
+        this.useAbility(game, player);
       }
       this.lastAbilityPressSeq[player.slot] = Math.max(this.lastAbilityPressSeq[player.slot], input.abilityPressSeq);
       player.updateAbilityTimers(dt);
@@ -312,6 +341,8 @@ class RunScene implements Scene {
     }
     this.bannerTimer = Math.max(0, this.bannerTimer - dt);
     this.hintTimer = Math.max(0, this.hintTimer - dt);
+    s.metrics.duration += dt;
+    s.resonanceActiveT = Math.max(0, s.resonanceActiveT - dt);
 
     const inWaveEnd = this.waveEndTimer >= 0;
 
@@ -747,10 +778,30 @@ class RunScene implements Scene {
   }
 
   /** Character active ability on Space. */
-  private useAbility(p: Player): void {
+  private useAbility(game: Game, p: Player): void {
     const ab = p.character.ability;
+    game.state.metrics.abilityUses[p.slot]++;
     p.abilityCd = p.abilityCooldown();
     p.activateAbility();
+    if (game.state.players.length === 2) {
+      const teammate = game.state.players.find((player) => player.slot !== p.slot);
+      if (teammate && !teammate.downed) {
+        const distance = Math.hypot(teammate.x - p.x, teammate.y - p.y);
+        if (distance <= 460) {
+          game.state.resonance += teammate.abilityActiveT > 0 ? 55 : 18;
+          if (game.state.resonance >= 100) {
+            game.state.resonance = 0;
+            game.state.resonanceActiveT = 6;
+            for (const player of game.state.alivePlayers()) {
+              player.abilityCd *= 0.75;
+              spawnRing(player.x, player.y, '#8be9fd');
+              spawnBurst(player.x, player.y, '#b18cff', 18);
+            }
+            playSfx('levelup');
+          }
+        }
+      }
+    }
     if (p.hasTalent('synchronization')) {
       for (const weapon of p.weapons) {
         weapon.cooldownTimer *= 0.7;
@@ -808,7 +859,7 @@ class RunScene implements Scene {
             p.x,
             p.y,
             0,
-            { ownerPlayerSlot: p.slot, x: p.x, y: p.y },
+            { ownerPlayerSlot: p.slot, x: p.x, y: p.y, weaponId: `ability:${p.character.ability.id}` },
           );
           // Keep the original hit direction for shield-facing checks, then turn
           // the resulting +220 impulse into a net −180 pull.
@@ -869,6 +920,7 @@ class RunScene implements Scene {
         game.state.squad.materials += Math.max(1, Math.round(r.weapon.price * 0.8));
       }
       p.recomputeStats();
+      game.state.metrics.maxWeapons[p.slot] = Math.max(game.state.metrics.maxWeapons[p.slot], p.weapons.length);
     } else {
       p.addItem(r.item);
     }
@@ -918,7 +970,30 @@ class RunScene implements Scene {
 
     renderHud(ctx, game.state, game.viewport, game.localPlayerSlot);
 
-    if (import.meta.env.DEV) {
+    if (this.tutorialStep) {
+      const step = TUTORIAL_STEPS[this.tutorialStep];
+      dimBackground(ctx, w, h);
+      const pw = Math.min(520, w - 40);
+      const ph = 250;
+      const x = (w - pw) / 2;
+      const y = (h - ph) / 2;
+      panel(ctx, x, y, pw, ph, { radius: 18, border: '#8be9fd66', glow: '#8be9fd33' });
+      drawIcon(ctx, step.icon, w / 2, y + 48, 42);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = displayFont(18);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(t(step.titleKey), w / 2, y + 88, pw - 36);
+      ctx.fillStyle = '#c8c8dc';
+      ctx.font = '14px system-ui, sans-serif';
+      drawTutorialText(ctx, t(step.bodyKey), w / 2, y + 122, pw - 44, 20, 3);
+      if (button(ctx, game.ui, w / 2 - 130, y + 178, 260, 48, t('tutorial.continue'), { primary: true })) {
+        this.tutorialDismiss = true;
+      }
+      return;
+    }
+
+    if (import.meta.env.DEV || loadSettings().showFps) {
       ctx.fillStyle = '#888';
       ctx.font = '12px monospace';
       ctx.textAlign = 'right';
@@ -949,7 +1024,8 @@ class RunScene implements Scene {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(t('coop.connectionLost'), w / 2, h / 2 - 42);
-      if (button(ctx, game.ui, w / 2 - 120, h / 2 + 20, 240, 50, t('coop.leave'))) {
+      const recoveryReward = disconnectedRunReward(game);
+      if (button(ctx, game.ui, w / 2 - 150, h / 2 + 20, 300, 50, recoveryReward > 0 ? t('coop.claimLeave', recoveryReward) : t('coop.leave'))) {
         this.connectionExit = true;
       }
       return;
@@ -1091,6 +1167,7 @@ class RunScene implements Scene {
         if (isMuted()) drawPauseSlash(ctx, 140, 100, 54, 44);
         if (button(ctx, ui, 206, 100, 54, 44, '', { icon: 'i_music' })) this.pauseAction = 'music';
         if (!isMusicOn()) drawPauseSlash(ctx, 206, 100, 54, 44);
+        if (button(ctx, ui, 272, 100, 54, 44, '⚙', { fontSize: 17 })) this.pauseAction = 'settings';
         if (button(ctx, ui, 70, 172, 260, 52, t('pause.resume'), { primary: true })) this.pauseAction = 'resume';
         if (button(ctx, ui, 70, 236, 260, 44, t('pause.surrender'))) this.pauseAction = 'surrender';
         ctx.fillStyle = '#667';
@@ -1156,6 +1233,10 @@ class RunScene implements Scene {
             border: hover ? '#8dff9a' : rc,
             glow: hover ? '#8dff9a55' : u.rarity > 1 ? `${rc}55` : undefined,
           });
+          panel(ctx, x + 10, y + 10, 28, 24, { radius: 7, fill: '#101018dd', border: '#8be9fd55' });
+          ctx.fillStyle = '#8be9fd';
+          ctx.font = 'bold 12px system-ui, sans-serif';
+          ctx.fillText(`${i + 1}`, x + 24, y + 22);
           drawIcon(ctx, talent ? u.icon : u.emoji, x + cw / 2, y + 44, 40);
           ctx.fillStyle = '#ffffff';
           ctx.font = 'bold 19px system-ui, sans-serif';

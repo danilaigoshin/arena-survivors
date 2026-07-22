@@ -1,7 +1,9 @@
 import type { ViewportMetrics } from './viewport';
+import { keyFor, type InputAction } from './settings';
 
 const keys = new Set<string>();
 const justPressed = new Set<string>();
+const gamepadButtonState = new Map<number, boolean>();
 let mouseX = 0;
 let mouseY = 0;
 let mouseClicked = false;
@@ -161,6 +163,50 @@ export function isDown(code: string): boolean {
   return keys.has(code);
 }
 
+function gamepad(): Gamepad | null {
+  if (typeof navigator === 'undefined' || !navigator.getGamepads) return null;
+  return Array.from(navigator.getGamepads()).find((entry): entry is Gamepad => !!entry && entry.connected) ?? null;
+}
+
+function gamepadPressed(index: number): boolean {
+  const down = (gamepad()?.buttons[index]?.value ?? 0) > 0.55;
+  const previous = gamepadButtonState.get(index) ?? false;
+  gamepadButtonState.set(index, down);
+  return down && !previous;
+}
+
+export function consumeUiDirection(): -1 | 0 | 1 {
+  if (gamepadPressed(12) || gamepadPressed(14)) return -1;
+  if (gamepadPressed(13) || gamepadPressed(15)) return 1;
+  return 0;
+}
+
+export function consumeUiConfirm(): boolean {
+  return gamepadPressed(0);
+}
+
+export function isActionDown(action: InputAction): boolean {
+  return isDown(keyFor(action));
+}
+
+export function consumeActionPress(action: InputAction): boolean {
+  const bound = keyFor(action);
+  if (consumeKeyPress(bound)) return true;
+  // Touch controls intentionally remain usable after keyboard rebinding.
+  if (action === 'ability' && bound !== 'Space' && consumeKeyPress('Space')) return true;
+  if (action === 'ability') return gamepadPressed(0);
+  if (action === 'pause') return gamepadPressed(9);
+  return false;
+}
+
+/** Used by the controls screen while waiting for a replacement binding. */
+export function consumeAnyKeyPress(): string | null {
+  const code = justPressed.values().next().value as string | undefined;
+  if (!code) return null;
+  justPressed.delete(code);
+  return code;
+}
+
 /** -1..1 on each axis from WASD/arrows, or the virtual joystick on touch. */
 export function moveAxis(out: { x: number; y: number }): void {
   if (joy.active) {
@@ -175,8 +221,20 @@ export function moveAxis(out: { x: number; y: number }): void {
     out.y = 0;
     return;
   }
-  out.x = (isDown('KeyD') || isDown('ArrowRight') ? 1 : 0) - (isDown('KeyA') || isDown('ArrowLeft') ? 1 : 0);
-  out.y = (isDown('KeyS') || isDown('ArrowDown') ? 1 : 0) - (isDown('KeyW') || isDown('ArrowUp') ? 1 : 0);
+  const gp = gamepad();
+  if (gp) {
+    const gx = (gp.axes[0] ?? 0) + ((gp.buttons[15]?.pressed ? 1 : 0) - (gp.buttons[14]?.pressed ? 1 : 0));
+    const gy = (gp.axes[1] ?? 0) + ((gp.buttons[13]?.pressed ? 1 : 0) - (gp.buttons[12]?.pressed ? 1 : 0));
+    if (Math.hypot(gx, gy) > 0.18) {
+      out.x = Math.max(-1, Math.min(1, gx));
+      out.y = Math.max(-1, Math.min(1, gy));
+      return;
+    }
+  }
+  out.x = (isActionDown('moveRight') || isDown('ArrowRight') ? 1 : 0)
+    - (isActionDown('moveLeft') || isDown('ArrowLeft') ? 1 : 0);
+  out.y = (isActionDown('moveDown') || isDown('ArrowDown') ? 1 : 0)
+    - (isActionDown('moveUp') || isDown('ArrowUp') ? 1 : 0);
 }
 
 export function getMouse(): { x: number; y: number; down: boolean } {

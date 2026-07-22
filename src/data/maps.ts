@@ -1,4 +1,5 @@
 import { ARENA_W, ARENA_H } from '../config';
+import { themeIndexForWave } from './routes';
 
 export interface Obstacle {
   x: number;
@@ -152,9 +153,14 @@ function fits(obstacles: Obstacle[], x: number, y: number, r: number): boolean {
   return true;
 }
 
-export function generateMap(wave: number): { theme: MapTheme; obstacles: Obstacle[] } {
-  const theme = THEMES[(wave - 1) % THEMES.length];
-  const rng = makeRng(wave * 7919 + 1337);
+export function themeForWave(wave: number, routeIds: readonly string[] = []): MapTheme {
+  return THEMES[themeIndexForWave(wave, routeIds) % THEMES.length];
+}
+
+export function generateMap(wave: number, routeIds: readonly string[] = []): { theme: MapTheme; obstacles: Obstacle[] } {
+  const themeIndex = themeIndexForWave(wave, routeIds) % THEMES.length;
+  const theme = THEMES[themeIndex];
+  const rng = makeRng(wave * 7919 + themeIndex * 1009 + 1337);
   const obstacles: Obstacle[] = [];
   const pick = (): string => theme.obstacleSprites[Math.floor(rng() * theme.obstacleSprites.length)];
   const tryAdd = (x: number, y: number): void => {

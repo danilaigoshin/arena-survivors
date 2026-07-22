@@ -3,6 +3,45 @@ import { drawIcon } from './icons';
 import { t } from '../core/i18n';
 import { displayFont } from './font';
 import type { ViewportMetrics } from '../core/viewport';
+import { consumeKeyPress, consumeUiConfirm, consumeUiDirection, isDown } from '../core/input';
+
+let focusedButton = 0;
+let renderedButtons = 0;
+let previousButtonCount = 0;
+let activateFocused = false;
+
+/** Starts one immediate-mode UI pass and handles keyboard/gamepad-like focus. */
+export function beginUiFrame(): void {
+  renderedButtons = 0;
+  activateFocused = false;
+  if (previousButtonCount <= 0) return;
+  const tab = consumeKeyPress('Tab');
+  const gamepadDirection = consumeUiDirection();
+  const backwards = tab && (isDown('ShiftLeft') || isDown('ShiftRight'));
+  const forwards = !backwards && (
+    tab
+    || consumeKeyPress('ArrowDown')
+    || consumeKeyPress('ArrowRight')
+    || gamepadDirection > 0
+  );
+  const back = backwards || consumeKeyPress('ArrowUp') || consumeKeyPress('ArrowLeft') || gamepadDirection < 0;
+  if (forwards) focusedButton = (focusedButton + 1) % previousButtonCount;
+  if (back) focusedButton = (focusedButton - 1 + previousButtonCount) % previousButtonCount;
+  activateFocused = consumeKeyPress('Enter') || consumeKeyPress('NumpadEnter') || consumeUiConfirm();
+}
+
+export function endUiFrame(): void {
+  previousButtonCount = renderedButtons;
+  if (previousButtonCount <= 0) focusedButton = 0;
+  else focusedButton = Math.min(focusedButton, previousButtonCount - 1);
+}
+
+export function resetUiFocus(): void {
+  focusedButton = 0;
+  renderedButtons = 0;
+  previousButtonCount = 0;
+  activateFocused = false;
+}
 
 export interface UiInput {
   mx: number;
@@ -161,8 +200,12 @@ export function button(
   label: string,
   opts: ButtonOpts = {},
 ): boolean {
+  const buttonIndex = renderedButtons++;
   const enabled = opts.enabled ?? true;
-  const hover = enabled && inRect(ui, x, y, w, h);
+  const pointerHover = enabled && inRect(ui, x, y, w, h);
+  if (pointerHover && (ui.down || ui.clicked)) focusedButton = buttonIndex;
+  const keyboardFocus = enabled && previousButtonCount > 0 && buttonIndex === focusedButton;
+  const hover = pointerHover || keyboardFocus;
   const pressed = hover && ui.down;
   // contents shift 1px down while pressed; the hit rect never moves
   const cy = y + h / 2 + (pressed ? 1 : 0);
@@ -190,6 +233,12 @@ export function button(
   ctx.strokeStyle = !enabled ? '#ffffff14' : opts.primary ? '#ffe9a8' : hover ? '#8be9fd' : '#ffffff2e';
   ctx.lineWidth = 1.5;
   ctx.stroke();
+  if (keyboardFocus) {
+    roundRect(ctx, x - 3, y - 3, w + 6, h + 6, 12);
+    ctx.strokeStyle = '#8be9fdcc';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
   ctx.fillStyle = opts.labelColor ?? (!enabled ? '#666672' : opts.primary ? '#241a08' : '#ffffff');
   const fs = opts.fontSize ?? 16;
   ctx.font = `bold ${fs}px system-ui, sans-serif`;
@@ -210,11 +259,12 @@ export function button(
   } else {
     ctx.fillText(label, x + w / 2, cy + 1);
   }
-  const clicked = hover && ui.clicked;
+  const clicked = (pointerHover && ui.clicked) || (keyboardFocus && activateFocused);
   if (clicked) {
     // consume the click: frames without a sim step keep ui.clicked alive,
     // and a second render pass must not fire the same button again
     ui.clicked = false;
+    activateFocused = false;
     playSfx('click');
   }
   return clicked;
@@ -269,6 +319,33 @@ export function bar(
 export function dimBackground(ctx: CanvasRenderingContext2D, w: number, h: number): void {
   ctx.fillStyle = 'rgba(5, 5, 10, 0.78)';
   ctx.fillRect(0, 0, w, h);
+}
+
+export function drawWrappedCentered(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  maxWidth: number,
+  lineHeight = 18,
+  maxLines = 4,
+): void {
+  const words = text.includes(' ') ? text.split(' ') : Array.from(text);
+  const separator = text.includes(' ') ? ' ' : '';
+  let line = '';
+  let lineIndex = 0;
+  for (const word of words) {
+    const probe = line ? `${line}${separator}${word}` : word;
+    if (line && ctx.measureText(probe).width > maxWidth) {
+      ctx.fillText(line, x, y + lineIndex * lineHeight);
+      line = word;
+      lineIndex++;
+      if (lineIndex >= maxLines) return;
+    } else {
+      line = probe;
+    }
+  }
+  if (line && lineIndex < maxLines) ctx.fillText(line, x, y + lineIndex * lineHeight);
 }
 
 /** Full-canvas background: radial gradient + subtle vignette. */

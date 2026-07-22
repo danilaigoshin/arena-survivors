@@ -3,7 +3,7 @@ import { pushOutOfObstacles } from '../data/maps';
 import type { Player } from '../entities/player';
 import type { NetworkInput, PlayerInputState } from '../multiplayer/types';
 import { clamp } from '../utils/math';
-import { consumeKeyPress, moveAxis } from '../core/input';
+import { consumeActionPress, moveAxis } from '../core/input';
 
 export interface InputProvider {
   read(nowMs: number): PlayerInputState;
@@ -15,7 +15,7 @@ export class LocalInputProvider implements InputProvider {
 
   read(_nowMs: number): PlayerInputState {
     moveAxis(this.axis);
-    if (consumeKeyPress('Space')) this.abilityPressSeq++;
+    if (consumeActionPress('ability')) this.abilityPressSeq++;
     return normalizePlayerInput({
       moveX: this.axis.x,
       moveY: this.axis.y,

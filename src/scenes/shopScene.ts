@@ -1,6 +1,6 @@
 import type { Game, Scene } from '../game';
 import { rollShop, reroll, effectivePrice, mergeTarget, type ShopState, type ShopOffer } from '../systems/shop';
-import { button, dimBackground, panel, inRect, sceneBackground, roundRect, responsiveScene, type UiInput } from '../render/ui';
+import { button, dimBackground, drawWrappedCentered, panel, inRect, sceneBackground, roundRect, responsiveScene, type UiInput } from '../render/ui';
 import { drawIcon, weaponIcon } from '../render/icons';
 import { drawSprite } from '../render/sprites';
 import { STAT_LABELS, formatStatValue, type Stats } from '../entities/stats';
@@ -16,7 +16,7 @@ import { playSfx } from '../render/audio';
 import { continueToNextWave, progressionScene } from './progressionScene';
 import { displayFont } from '../render/font';
 import { getWaveDef } from '../data/waves';
-import { THEMES } from '../data/maps';
+import { themeForWave } from '../data/maps';
 import { ITEMS } from '../data/items';
 import { WEAPONS } from '../data/weapons';
 import { GuestSession, HostSession } from '../multiplayer/session';
@@ -31,6 +31,11 @@ import type {
 } from '../multiplayer/stateProtocol';
 import { runScene } from './run';
 import { menuScene } from './menu';
+import { markTutorial } from '../core/save';
+import { shopTutorialAfterWave, TUTORIAL_STEPS, type TutorialStepId } from '../core/tutorial';
+import { consumeKeyPress } from '../core/input';
+import { claimDisconnectedRun, disconnectedRunReward } from '../core/disconnectRecovery';
+import { routesAfterWave } from '../data/routes';
 
 const CARD_W = 205;
 const CARD_H = 290;
@@ -97,6 +102,8 @@ class ShopScene implements Scene {
   private networkPhase: AuthoritativeShopPhase | null = null;
   private networkPhaseRevision = 0;
   private connectionExit = false;
+  private tutorialStep: TutorialStepId | null = null;
+  private tutorialDismiss = false;
 
   onEnter(): void {
     this.enterAt = performance.now();
@@ -126,6 +133,8 @@ class ShopScene implements Scene {
     this.soldAt = [0, 0, 0, 0];
     this.prevSold = this.shop.offers.map((o) => o.sold);
     this.branchFocus = game.localPlayer.pendingWeaponBranches()[0] ?? null;
+    this.tutorialStep = game.sessionRole === 'solo' ? shopTutorialAfterWave(game.state.wave) : null;
+    this.tutorialDismiss = false;
   }
 
   enterRemote(game: Game, phase: ShopPhase): boolean {
@@ -337,6 +346,7 @@ class ShopScene implements Scene {
     }
     game.state.squad.materials -= price;
     offer.sold = true;
+    game.state.metrics.maxWeapons[p.slot] = Math.max(game.state.metrics.maxWeapons[p.slot], p.weapons.length);
     playSfx('buy');
   }
 
@@ -386,6 +396,7 @@ class ShopScene implements Scene {
     weapon.cooldownTimer = 0;
     p.items.splice(itemIdx, 1); // the catalyst is consumed
     p.recomputeStats();
+    if (!game.state.metrics.evolvedWeapons.includes(weapon.def.id)) game.state.metrics.evolvedWeapons.push(weapon.def.id);
     playSfx('levelup');
   }
 
@@ -467,9 +478,19 @@ class ShopScene implements Scene {
 
   update(game: Game, dt: number): void {
     const session = game.networkSession;
+    if (this.tutorialStep) {
+      if (this.tutorialDismiss || consumeKeyPress('Enter')) {
+        markTutorial(this.tutorialStep);
+        this.tutorialStep = null;
+        this.tutorialDismiss = false;
+        playSfx('click');
+      }
+      return;
+    }
     if (session?.status === 'connection-lost') {
       if (this.connectionExit) {
         this.connectionExit = false;
+        claimDisconnectedRun(game);
         game.networkSession = null;
         game.sessionRole = 'solo';
         void session.close();
@@ -487,6 +508,30 @@ class ShopScene implements Scene {
     } else if (session instanceof GuestSession) {
       this.syncGuestPhase(game, session);
       if (game.scene !== this) return;
+    }
+    if (!this.focusedPendingBranch(game) && !this.pending) {
+      for (let i = 0; i < this.shop.offers.length; i++) {
+        if (!consumeKeyPress(`Digit${i + 1}`) && !consumeKeyPress(`Numpad${i + 1}`)) continue;
+        const offer = this.shop.offers[i];
+        if (offer.kind === 'weapon' && mergeTarget(offer, game.localPlayer) === 3) continue;
+        this.pending = () => this.tryBuy(game, offer);
+      }
+      if (consumeKeyPress('KeyR')) {
+        this.pending = () => {
+          if (
+            game.sessionRole !== 'solo'
+            && this.submitNetworkCommand(game, {
+              type: 'reroll',
+              phaseRevision: this.networkPhase?.phaseRevision ?? this.networkPhaseRevision,
+              slot: game.localPlayerSlot,
+            })
+          ) {
+            playSfx('click');
+            return;
+          }
+          if (reroll(this.shop, game.state.wave, game.localPlayer, game.state.squad)) playSfx('reroll');
+        };
+      }
     }
     if (this.armedSell) {
       this.armedSell.t -= dt;
@@ -520,7 +565,8 @@ class ShopScene implements Scene {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(tt('coop.connectionLost'), w / 2, h / 2 - 42);
-      if (button(ctx, game.ui, w / 2 - 120, h / 2 + 20, 240, 50, tt('coop.leave'))) {
+      const recoveryReward = disconnectedRunReward(game);
+      if (button(ctx, game.ui, w / 2 - 150, h / 2 + 20, 300, 50, recoveryReward > 0 ? tt('coop.claimLeave', recoveryReward) : tt('coop.leave'))) {
         this.connectionExit = true;
       }
     }
@@ -627,6 +673,11 @@ class ShopScene implements Scene {
         border: offer.sold ? '#ffffff14' : hover ? rc : `${rc}88`,
         glow: hover ? `${rc}66` : offer.sold ? undefined : `${rc}22`,
       });
+      panel(ctx, x + 9, y + 10, 26, 22, { radius: 7, fill: '#101018dd', border: '#8be9fd55' });
+      ctx.fillStyle = '#8be9fd';
+      ctx.font = 'bold 11px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(`${i + 1}`, x + 22, y + 21);
       if (!offer.sold) {
         ctx.save();
         roundRect(ctx, x, y, CARD_W, CARD_H, 14);
@@ -936,20 +987,42 @@ class ShopScene implements Scene {
 
     // weapon tooltip on hover (drawn last, follows the cursor)
     if (hoveredWeapon) this.renderWeaponTooltip(game, ctx, hoveredWeapon, w, h, ui);
+
+    if (this.tutorialStep) {
+      const step = TUTORIAL_STEPS[this.tutorialStep];
+      dimBackground(ctx, w, h);
+      const pw = 540;
+      const ph = 250;
+      const x = w / 2 - pw / 2;
+      const y = h / 2 - ph / 2;
+      panel(ctx, x, y, pw, ph, { radius: 18, border: '#ffd23e66', glow: '#ffd23e33' });
+      drawIcon(ctx, step.icon, w / 2, y + 48, 42);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = displayFont(18);
+      ctx.textAlign = 'center';
+      ctx.fillText(tt(step.titleKey), w / 2, y + 88, pw - 40);
+      ctx.fillStyle = '#c8c8dc';
+      ctx.font = '14px system-ui, sans-serif';
+      drawWrappedCentered(ctx, tt(step.bodyKey), w / 2, y + 122, pw - 46, 20, 3);
+      if (button(ctx, ui, w / 2 - 130, y + 178, 260, 48, tt('tutorial.continue'), { primary: true })) {
+        this.tutorialDismiss = true;
+      }
+    }
   }
 
   /** Preview of the coming wave: theme-colored chip with mini enemy sprites or the boss. */
   private drawNextWaveChip(game: Game, ctx: CanvasRenderingContext2D, x: number, y: number, t: number): void {
     const nextWave = game.state.wave + 1;
     const def = getWaveDef(nextWave);
-    const theme = THEMES[(nextWave - 1) % THEMES.length];
+    const theme = themeForWave(nextWave, game.state.routeIds);
+    const routePending = routesAfterWave(game.state.wave).length > 0;
     const cw = 240;
     const ch = 64;
     const bossPulse = def.boss ? 0.5 + 0.5 * Math.sin(t * 4) : 0;
     panel(ctx, x, y, cw, ch, {
       radius: 12,
-      fill: [theme.floorInner, theme.floorOuter],
-      border: def.boss ? `rgba(230,69,83,${(0.4 + bossPulse * 0.6).toFixed(2)})` : `${theme.borderColor}aa`,
+      fill: routePending ? ['#20243a', '#141522'] : [theme.floorInner, theme.floorOuter],
+      border: routePending ? '#8be9fdaa' : def.boss ? `rgba(230,69,83,${(0.4 + bossPulse * 0.6).toFixed(2)})` : `${theme.borderColor}aa`,
     });
     ctx.textAlign = 'left';
     ctx.fillStyle = '#ffffff';
@@ -957,7 +1030,11 @@ class ShopScene implements Scene {
     ctx.fillText(tt('shop.nextWave', nextWave), x + 14, y + 20);
     ctx.fillStyle = '#c8c8dc';
     ctx.font = '13px system-ui, sans-serif';
-    ctx.fillText(tn('t', theme.name, theme.name), x + 14, y + 44);
+    ctx.fillText(routePending ? tt('shop.routePending') : tn('t', theme.name, theme.name), x + 14, y + 44, cw - 62);
+    if (routePending) {
+      drawIcon(ctx, 'i_speed', x + cw - 32, y + ch / 2, 30);
+      return;
+    }
     if (def.boss) {
       drawSprite(ctx, def.boss, x + cw - 34, y + ch / 2 + 4, 36, { squash: Math.sin(t * 3) * 0.04 });
       ctx.fillStyle = '#ff5470';

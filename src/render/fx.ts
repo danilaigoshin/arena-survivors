@@ -3,6 +3,7 @@ import { POOL_DMG_NUMBERS, POOL_PARTICLES } from '../config';
 import { drawSprite, SPRITES } from './sprites';
 import { displayFont } from './font';
 import { emitPresentationEvent } from '../multiplayer/presentationBus';
+import { loadSettings } from '../core/settings';
 
 class DamageNumber {
   active = false;
@@ -62,6 +63,7 @@ const RING_DUR = 0.45;
 let shakePower = 0;
 
 export function addShake(power: number): void {
+  if (!loadSettings().screenShake) return;
   shakePower = Math.min(14, Math.max(shakePower, power));
 }
 
@@ -70,6 +72,7 @@ let kickX = 0;
 let kickY = 0;
 
 export function addKick(dx: number, dy: number): void {
+  if (!loadSettings().screenShake) return;
   kickX += dx;
   kickY += dy;
   const len = Math.hypot(kickX, kickY);
@@ -99,6 +102,7 @@ export function shakeOffsetY(time: number): number {
 export let screenFlash = 0;
 
 export function spawnDamageNumber(x: number, y: number, value: number, crit = false, heal = false): void {
+  if (!loadSettings().damageNumbers) return;
   const d = dmgNumbers.alloc();
   if (!d) return;
   d.x = x + (Math.random() - 0.5) * 14;
@@ -113,6 +117,7 @@ export function spawnDamageNumber(x: number, y: number, value: number, crit = fa
 
 export function spawnBurst(x: number, y: number, color: string, count: number): void {
   emitPresentationEvent({ type: 'fx', effect: 'burst', x, y, color, count });
+  if (loadSettings().reducedEffects) count = Math.max(2, Math.ceil(count * 0.35));
   for (let i = 0; i < count; i++) {
     const p = particles.alloc();
     if (!p) return;
@@ -147,6 +152,7 @@ function paletteColors(spriteId: string): string[] {
 /** Chunks of the dying enemy: palette-colored, gravity, spray away from the killing blow. */
 export function spawnGibs(x: number, y: number, spriteId: string, count: number, dirAngle?: number): void {
   const colors = paletteColors(spriteId);
+  if (loadSettings().reducedEffects) count = Math.max(2, Math.ceil(count * 0.3));
   for (let i = 0; i < count; i++) {
     const p = particles.alloc();
     if (!p) return;
@@ -167,6 +173,7 @@ export function spawnGibs(x: number, y: number, spriteId: string, count: number,
 /** Impact sparks along the hit direction. */
 export function spawnSparks(x: number, y: number, dirAngle: number, color: string, count: number): void {
   emitPresentationEvent({ type: 'fx', effect: 'sparks', x, y, color, count, angle: dirAngle });
+  if (loadSettings().reducedEffects) count = Math.max(1, Math.ceil(count * 0.4));
   for (let i = 0; i < count; i++) {
     const p = particles.alloc();
     if (!p) return;
@@ -185,7 +192,7 @@ export function spawnSparks(x: number, y: number, dirAngle: number, color: strin
 }
 
 export function flashScreen(): void {
-  screenFlash = 0.35;
+  if (loadSettings().screenFlash) screenFlash = 0.35;
 }
 
 export function spawnDeathPop(sprite: string, x: number, y: number, size: number, flip: boolean): void {
@@ -211,7 +218,7 @@ export function spawnRing(x: number, y: number, color: string): void {
 
 /** Permanently stamps a goo splat into the baked floor — battle scars for free. */
 export function stampGoo(floor: HTMLCanvasElement | null, x: number, y: number, color: string): void {
-  if (!floor) return;
+  if (!floor || loadSettings().reducedEffects) return;
   const ctx = floor.getContext('2d')!;
   const r = 12 + Math.random() * 10;
   const g = ctx.createRadialGradient(x, y, 0, x, y, r);

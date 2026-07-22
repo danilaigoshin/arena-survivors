@@ -11,6 +11,11 @@ import { metaScene } from './metaScene';
 import { infoScene } from './infoScene';
 import { loadMeta } from '../core/save';
 import { lobbyScene } from './lobbyScene';
+import { loadCheckpoint, restoreCheckpoint } from '../core/checkpoint';
+import { runScene } from './run';
+import { settingsScene } from './settingsScene';
+import { collectionScene } from './collectionScene';
+import { APP_VERSION } from '../version';
 
 const WALKERS = ['chaser', 'runner', 'tank', 'shooter'];
 
@@ -32,6 +37,9 @@ class MenuScene implements Scene {
   private goMeta = false;
   private goInfo = false;
   private goCoop = false;
+  private goContinue = false;
+  private goSettings = false;
+  private goCollection = false;
   private toggles: { mute?: boolean; music?: boolean } = {};
   private langOpen = false;
 
@@ -55,6 +63,25 @@ class MenuScene implements Scene {
     if (this.goCoop) {
       this.goCoop = false;
       game.setScene(lobbyScene);
+      return;
+    }
+    if (this.goContinue) {
+      this.goContinue = false;
+      if (restoreCheckpoint(game)) {
+        runScene.enterWave(game);
+        game.setScene(runScene);
+      }
+      return;
+    }
+    if (this.goSettings) {
+      this.goSettings = false;
+      settingsScene.open(menuScene);
+      game.setScene(settingsScene);
+      return;
+    }
+    if (this.goCollection) {
+      this.goCollection = false;
+      game.setScene(collectionScene);
       return;
     }
     if (this.toggles.mute) {
@@ -153,15 +180,24 @@ class MenuScene implements Scene {
 
     // button stack
     const by = h * 0.45;
-    if (button(ctx, ui, w / 2 - 140, by, 280, 62, tt('menu.play'), { primary: true, fontSize: 21 })) {
+    const checkpoint = loadCheckpoint();
+    if (checkpoint) {
+      if (button(ctx, ui, w / 2 - 218, by, 280, 62, tt('menu.continue', checkpoint.wave), { primary: true, fontSize: 17 })) {
+        this.goContinue = true;
+      }
+      if (button(ctx, ui, w / 2 + 74, by, 144, 62, tt('menu.newRun'), { fontSize: 14 })) this.goCharSelect = true;
+    } else if (button(ctx, ui, w / 2 - 140, by, 280, 62, tt('menu.play'), { primary: true, fontSize: 21 })) {
       this.goCharSelect = true;
     }
     const shards = loadMeta().shards;
     if (button(ctx, ui, w / 2 - 140, by + 74, 280, 48, tt('menu.coop'))) {
       this.goCoop = true;
     }
-    if (button(ctx, ui, w / 2 - 140, by + 134, 280, 48, tt('menu.workshop', shards), { icon: 'i_shard' })) {
+    if (button(ctx, ui, w / 2 - 140, by + 134, 136, 48, tt('menu.workshopShort', shards), { icon: 'i_shard', fontSize: 12 })) {
       this.goMeta = true;
+    }
+    if (button(ctx, ui, w / 2 + 4, by + 134, 136, 48, tt('menu.collection'), { icon: 'i_star', fontSize: 12 })) {
+      this.goCollection = true;
     }
 
     // controls hint
@@ -182,7 +218,7 @@ class MenuScene implements Scene {
     ctx.fillStyle = '#444455';
     ctx.font = '12px system-ui, sans-serif';
     ctx.textAlign = 'left';
-    ctx.fillText('v1.0', 14, h - 16);
+    ctx.fillText(`v${APP_VERSION}`, 14, h - 16);
     ctx.textAlign = 'center';
 
     // heroes on a podium row, safely below the hint
@@ -198,14 +234,15 @@ class MenuScene implements Scene {
     });
 
     // sound toggles + info: pixel icons, red slash when off
-    if (button(ctx, ui, w - 174, 16, 48, 40, '?', { fontSize: 19 })) this.goInfo = true;
+    if (button(ctx, ui, w - 230, 16, 48, 40, '?', { fontSize: 19 })) this.goInfo = true;
+    if (button(ctx, ui, w - 174, 16, 48, 40, '⚙', { fontSize: 17 })) this.goSettings = true;
     if (button(ctx, ui, w - 118, 16, 48, 40, '', { icon: 'i_sound' })) this.toggles.mute = true;
     if (isMuted()) drawSlash(ctx, w - 118, 16, 48, 40);
     if (button(ctx, ui, w - 62, 16, 48, 40, '', { icon: 'i_music' })) this.toggles.music = true;
     if (!isMusicOn()) drawSlash(ctx, w - 62, 16, 48, 40);
 
     // language dropdown (drawn last so the open list sits on top)
-    const lx = w - 244;
+    const lx = w - 300;
     if (button(ctx, ui, lx, 16, 62, 40, getLang().toUpperCase(), { fontSize: 13, icon: 'i_lang' })) {
       this.langOpen = !this.langOpen;
     }

@@ -6,6 +6,7 @@ import { WEAPON_BRANCHES } from '../data/weaponBranches';
 import { WEAPONS, type Tier } from '../data/weapons';
 import { WeaponInstance, type WeaponBranchId } from '../entities/weapon';
 import { BASE_STATS, type StatMod, type Stats } from '../entities/stats';
+import { ROUTES } from '../data/routes';
 import type { RunState } from '../state';
 import type { PlayerSlot } from './types';
 
@@ -32,6 +33,7 @@ export interface BuildState {
   version: 1;
   buildRevision: number;
   players: PlayerBuildState[];
+  routeIds?: string[];
 }
 
 interface PhaseBase {
@@ -90,7 +92,7 @@ export interface EventPhase extends PhaseBase {
 
 export interface ProgressionPhase extends PhaseBase {
   phase: 'progression';
-  kind: 'ability' | 'contract';
+  kind: 'ability' | 'contract' | 'route';
   choiceIds: [string[], string[]];
   submitted: [boolean, boolean];
 }
@@ -116,12 +118,14 @@ const itemById = new Map(ITEMS.map((definition) => [definition.id, definition]))
 const talentIds = new Set(TALENTS.map((definition) => definition.id));
 const augmentIds = new Set(ABILITY_AUGMENTS.map((definition) => definition.id));
 const branchIds = new Set(WEAPON_BRANCHES.map((definition) => definition.id));
+const routeIds = new Set(ROUTES.map((definition) => definition.id));
 const statKeys = new Set(Object.keys(BASE_STATS));
 
 export function captureBuildState(state: RunState, buildRevision: number): BuildState {
   return {
     version: 1,
     buildRevision,
+    routeIds: [...state.routeIds],
     players: state.players.map((player) => ({
       slot: player.slot,
       characterId: player.character.id,
@@ -150,6 +154,13 @@ export function applyBuildState(state: RunState, build: BuildState): boolean {
     || !Array.isArray(build.players)
     || build.players.length !== state.players.length
     || build.players.length > 2
+  ) return false;
+
+  if (
+    build.routeIds !== undefined
+    && (!Array.isArray(build.routeIds)
+      || build.routeIds.length > 3
+      || build.routeIds.some((id) => typeof id !== 'string' || !routeIds.has(id)))
   ) return false;
 
   const seenSlots = new Set<PlayerSlot>();
@@ -233,5 +244,7 @@ export function applyBuildState(state: RunState, build: BuildState): boolean {
     player.weapons = weapons;
     player.recomputeStats();
   }
+  state.routeIds = build.routeIds ? [...build.routeIds] : state.routeIds;
+  state.metrics.routeIds = [...state.routeIds];
   return true;
 }

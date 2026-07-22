@@ -8,6 +8,7 @@ import { shakeOffsetX, shakeOffsetY, kickOffsetX, kickOffsetY } from './fx';
 import { drawFx } from './fx';
 import { drawLiveDecor } from './floor';
 import type { Player } from '../entities/player';
+import { COSMETICS } from '../data/challenges';
 
 const CHAIN_FX_DUR = 0.14;
 
@@ -379,6 +380,23 @@ export function renderWorld(ctx: CanvasRenderingContext2D, state: RunState, cam:
 
   drawWeaponAreas(ctx, state, time);
   for (const player of state.players) drawCharacterAbility(ctx, player, time);
+
+  // Earned cosmetic aura. It is profile data, so co-op partners also see it.
+  for (const player of state.players) {
+    const cosmetic = COSMETICS.find((entry) => entry.id === player.profile.cosmeticId());
+    if (!cosmetic || cosmetic.id === 'none') continue;
+    const pulse = 1 + Math.sin(time * 3.2 + player.slot * 1.7) * 0.1;
+    ctx.save();
+    ctx.globalAlpha = player.downed ? 0.18 : 0.34;
+    ctx.strokeStyle = cosmetic.color;
+    ctx.lineWidth = 4;
+    ctx.shadowColor = cosmetic.color;
+    ctx.shadowBlur = 18;
+    ctx.beginPath();
+    ctx.ellipse(player.x, player.y + player.radius * 0.72, player.radius * 1.65 * pulse, player.radius * 0.78 * pulse, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
 
   // battlefield chests: bobbing with a golden pulse
   for (const c of state.chests) {
