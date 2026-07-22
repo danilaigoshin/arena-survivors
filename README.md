@@ -1,8 +1,10 @@
 # 🥔 Arena Survivors
 
-A pixel-art arena survival roguelite in the browser. Survive 20 waves, build your loadout of weapons and items, take down four bosses — then push your luck in endless mode.
+A complete pixel-art arena survival roguelite that runs directly in the browser. Survive 20 waves, build and evolve your loadout, defeat four multi-phase bosses — then push your luck in endless mode.
 
-**[▶ Play](https://danilaigoshin.github.io/arena-survivors/)** · Controls: WASD / arrows · Esc — pause · M — sound · Touch supported
+**[▶ Play now](https://danilaigoshin.github.io/arena-survivors/)** · **[🎬 Watch the trailer](output/arena-survivors-x.mp4)**
+
+Move with **WASD / arrows**, use the hero ability with **Space**, pause with **Esc**, and toggle sound with **M**. Touch controls and gamepads are supported.
 
 ![Menu](docs/menu.png)
 
@@ -21,7 +23,7 @@ A pixel-art arena survival roguelite in the browser. Survive 20 waves, build you
 - **Two-player online co-op (beta)** with invite links, shared XP/materials, squad Resonance and partial reward recovery after disconnects
 - First-run tutorial, full keyboard remapping and gamepad navigation, accessibility options, wave checkpoints and save backup/import
 - Installable PWA with offline solo play after the first successful load
-- Pixel art, animation and synthesized sound — everything drawn and generated in code, zero external assets
+- Pixel art, animation and synthesized sound — the game itself uses no external art or audio assets
 
 ![Combat](docs/gameplay.png)
 ![Shop](docs/shop.png)
@@ -31,6 +33,7 @@ A pixel-art arena survival roguelite in the browser. Survive 20 waves, build you
 
 - **TypeScript + HTML5 Canvas 2D**, built with Vite and tested with Vitest
 - **Trystero + WebRTC** for host-authoritative peer-to-peer co-op; public Nostr relays are used only for signaling
+- **Remotion + automated browser capture** for reproducible screenshots and the 18-second promo trailer
 - Fixed 60 Hz timestep, object pools, spatial grid — 300 enemies at 120 fps
 - Sprites are text-based pixel grids baked into offscreen canvases
 - Sound is WebAudio synthesis (no audio files), saves live in localStorage
@@ -64,8 +67,19 @@ npm run build    # production build in dist/
 
 Node.js 20 or newer is required.
 
+## Refresh screenshots and trailer
+
+The gameplay images in `docs/` and the promo video are generated from the current game build:
+
+```bash
+npm run screenshots:capture  # refresh docs/menu.png, gameplay.png, shop.png and boss.png
+npm run video:studio         # preview and edit the Remotion composition
+npm run video:render         # render output/arena-survivors-x.mp4
+npm run media:refresh        # refresh screenshots first, then render the video
+```
+
 Pushes to `main` are built and deployed automatically with GitHub Actions. A deployment can also be started manually with `npm run deploy` when the GitHub CLI is authenticated.
 
 ---
 
-Built in tandem with [Claude Code](https://claude.com/claude-code).
+Built with **Fable 5 + GPT-5.6 Sol**.

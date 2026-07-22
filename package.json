@@ -10,12 +10,23 @@
     "check": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "deploy": "gh workflow run deploy.yml"
+    "deploy": "gh workflow run deploy.yml",
+    "screenshots:capture": "node video/capture-screenshots.mjs",
+    "video:audio": "node video/generate-audio.mjs",
+    "video:studio": "npm run video:audio && remotion studio video/index.tsx",
+    "video:render": "npm run video:audio && remotion render video/index.tsx ArenaSurvivorsX output/arena-survivors-x.mp4 --codec=h264 --crf=18 --pixel-format=yuv420p",
+    "media:refresh": "npm run screenshots:capture && npm run video:render"
   },
   "engines": {
     "node": ">=20"
   },
   "devDependencies": {
+    "@remotion/cli": "^4.0.496",
+    "@remotion/renderer": "^4.0.496",
+    "@types/react": "^19.2.17",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "remotion": "^4.0.496",
     "typescript": "^5.5.0",
     "vite": "^6.0.0",
     "vitest": "4.1.6"
