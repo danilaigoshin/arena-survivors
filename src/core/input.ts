@@ -77,7 +77,9 @@ export function initInput(canvas: HTMLCanvasElement, getViewport: () => Viewport
     mouseX = e.clientX;
     mouseY = e.clientY;
   });
-  canvas.addEventListener('mousedown', () => {
+  canvas.addEventListener('mousedown', (e) => {
+    mouseX = e.clientX;
+    mouseY = e.clientY;
     mouseDown = true;
     mouseClicked = true;
   });

@@ -209,9 +209,12 @@ export class Game {
         // before the next touch can arrive between animation frames.
         setJoystickEnabled(this.scene.wantsJoystick === true && this.scene.blocksJoystick !== true);
         applyCanvasAccessibility(this.canvas);
-        beginUiFrame();
+        beginUiFrame(this.ui);
         this.scene.render(this, this.ctx);
         endUiFrame();
+        // Non-gameplay UI clicks are resolved during this render pass. Discard
+        // empty-space clicks so they cannot land after the pointer moves.
+        if (this.scene.wantsJoystick !== true) this.ui.clicked = false;
       }
       if (!this.viewport.portraitBlocked && this.fadeT > 0) {
         this.prepareContext();

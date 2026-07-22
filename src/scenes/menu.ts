@@ -44,7 +44,6 @@ class MenuScene implements Scene {
   private langOpen = false;
 
   update(game: Game, _dt: number): void {
-    if (game.ui.clicked) ensureAudio();
     if (this.goCharSelect) {
       this.goCharSelect = false;
       game.setScene(charSelectScene);
@@ -95,10 +94,11 @@ class MenuScene implements Scene {
   }
 
   render(game: Game, ctx: CanvasRenderingContext2D): void {
-    responsiveScene(ctx, game.ui, game.viewport, 1000, 560, (w, h, ui) => this.renderContent(game, ctx, w, h, ui));
+    responsiveScene(ctx, game.ui, game.viewport, 1000, 780, (w, h, ui) => this.renderContent(game, ctx, w, h, ui));
   }
 
   private renderContent(game: Game, ctx: CanvasRenderingContext2D, w: number, h: number, ui: UiInput): void {
+    if (ui.clicked) ensureAudio();
     const t = performance.now() / 1000;
     sceneBackground(ctx, w, h, '#1c1a28', '#0a0a10');
 
@@ -178,47 +178,58 @@ class MenuScene implements Scene {
     ctx.font = 'bold 14px system-ui, sans-serif';
     ctx.fillText(tt('menu.tagline'), w / 2, titleY + 70);
 
-    // button stack
-    const by = h * 0.45;
+    // One full-width action per row keeps the hierarchy consistent and gives
+    // every translation enough horizontal room. The cursor-based layout also
+    // keeps the information block attached to the actual end of the menu.
+    const by = h * 0.38;
     const menuWidth = Math.min(460, w - 72);
     const menuX = w / 2 - menuWidth / 2;
-    const menuGap = 12;
+    const menuGap = 10;
+    const primaryHeight = 58;
+    const itemHeight = 48;
+    let rowY = by;
     const checkpoint = loadCheckpoint();
     if (checkpoint) {
-      const continueWidth = Math.round((menuWidth - menuGap) * 0.66);
-      const newRunWidth = menuWidth - menuGap - continueWidth;
-      if (button(ctx, ui, menuX, by, continueWidth, 62, tt('menu.continue', checkpoint.wave), { primary: true, fontSize: 17 })) {
+      if (button(ctx, ui, menuX, rowY, menuWidth, primaryHeight, tt('menu.continue', checkpoint.wave), { primary: true, fontSize: 17 })) {
         this.goContinue = true;
       }
-      if (button(ctx, ui, menuX + continueWidth + menuGap, by, newRunWidth, 62, tt('menu.newRun'), { fontSize: 14 })) this.goCharSelect = true;
-    } else if (button(ctx, ui, menuX, by, menuWidth, 62, tt('menu.play'), { primary: true, fontSize: 21 })) {
-      this.goCharSelect = true;
+      rowY += primaryHeight + menuGap;
+      if (button(ctx, ui, menuX, rowY, menuWidth, itemHeight, tt('menu.newRun'), { fontSize: 14 })) this.goCharSelect = true;
+      rowY += itemHeight + menuGap;
+    } else {
+      if (button(ctx, ui, menuX, rowY, menuWidth, primaryHeight, tt('menu.play'), { primary: true, fontSize: 21 })) {
+        this.goCharSelect = true;
+      }
+      rowY += primaryHeight + menuGap;
     }
     const shards = loadMeta().shards;
-    if (button(ctx, ui, menuX, by + 74, menuWidth, 48, tt('menu.coop'))) {
+    if (button(ctx, ui, menuX, rowY, menuWidth, itemHeight, tt('menu.coop'))) {
       this.goCoop = true;
     }
-    const workshopWidth = Math.round((menuWidth - menuGap) * 0.57);
-    const collectionWidth = menuWidth - menuGap - workshopWidth;
-    if (button(ctx, ui, menuX, by + 134, workshopWidth, 48, tt('menu.workshopShort', shards), { icon: 'i_shard', fontSize: 13 })) {
+    rowY += itemHeight + menuGap;
+    if (button(ctx, ui, menuX, rowY, menuWidth, itemHeight, tt('menu.workshopShort', shards), { icon: 'i_shard', fontSize: 14 })) {
       this.goMeta = true;
     }
-    if (button(ctx, ui, menuX + workshopWidth + menuGap, by + 134, collectionWidth, 48, tt('menu.collection'), { icon: 'i_star', fontSize: 13 })) {
+    rowY += itemHeight + menuGap;
+    if (button(ctx, ui, menuX, rowY, menuWidth, itemHeight, tt('menu.collection'), { icon: 'i_star', fontSize: 14 })) {
       this.goCollection = true;
     }
+    const menuBottom = rowY + itemHeight;
 
-    // controls hint
+    // Information block with deliberate breathing room between navigation and heroes.
+    const hintY = menuBottom + 28;
+    const recordsY = hintY + 28;
     ctx.fillStyle = '#667';
     ctx.font = '14px system-ui, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(isTouchDevice() ? tt('menu.hintTouch') : tt('menu.hint'), w / 2, by + 198);
+    ctx.fillText(isTouchDevice() ? tt('menu.hintTouch') : tt('menu.hint'), w / 2, hintY);
 
     // records line
     const st = loadMeta().stats;
     if (st.runs > 0) {
       ctx.fillStyle = '#8a8aa6';
       ctx.font = 'bold 13px system-ui, sans-serif';
-      ctx.fillText(tt('menu.records', st.runs, st.wins, st.bestWave, st.bestKills), w / 2, by + 220);
+      ctx.fillText(tt('menu.records', st.runs, st.wins, st.bestWave, st.bestKills), w / 2, recordsY);
     }
 
     // version
@@ -228,9 +239,10 @@ class MenuScene implements Scene {
     ctx.fillText(`v${APP_VERSION}`, 14, h - 16);
     ctx.textAlign = 'center';
 
-    // heroes on a podium row, safely below the hint
+    // Heroes stay at least 64 px below the records baseline, leaving roughly
+    // 28 px of visible space before the top of their sprites.
     const heroes = CHARACTERS;
-    const hy = Math.max(by + 252, h * 0.79);
+    const hy = Math.max(recordsY + 64, h * 0.79);
     heroes.forEach((c, i) => {
       const x = w * 0.5 + (i - (heroes.length - 1) / 2) * 96;
       drawShadow(ctx, x, hy + 30, 44);

@@ -9,11 +9,14 @@ let focusedButton = 0;
 let renderedButtons = 0;
 let previousButtonCount = 0;
 let activateFocused = false;
+let keyboardFocusVisible = false;
 
 /** Starts one immediate-mode UI pass and handles keyboard/gamepad-like focus. */
-export function beginUiFrame(): void {
+export function beginUiFrame(ui: UiInput): void {
   renderedButtons = 0;
   activateFocused = false;
+  const pointerActive = ui.clicked || ui.down;
+  if (pointerActive) keyboardFocusVisible = false;
   if (previousButtonCount <= 0) return;
   const tab = consumeKeyPress('Tab');
   const gamepadDirection = consumeUiDirection();
@@ -25,15 +28,30 @@ export function beginUiFrame(): void {
     || gamepadDirection > 0
   );
   const back = backwards || consumeKeyPress('ArrowUp') || consumeKeyPress('ArrowLeft') || gamepadDirection < 0;
-  if (forwards) focusedButton = (focusedButton + 1) % previousButtonCount;
-  if (back) focusedButton = (focusedButton - 1 + previousButtonCount) % previousButtonCount;
-  activateFocused = consumeKeyPress('Enter') || consumeKeyPress('NumpadEnter') || consumeUiConfirm();
+  if (forwards) {
+    focusedButton = keyboardFocusVisible ? (focusedButton + 1) % previousButtonCount : 0;
+    keyboardFocusVisible = true;
+  }
+  if (back) {
+    focusedButton = keyboardFocusVisible ? (focusedButton - 1 + previousButtonCount) % previousButtonCount : previousButtonCount - 1;
+    keyboardFocusVisible = true;
+  }
+  const confirm = consumeKeyPress('Enter') || consumeKeyPress('NumpadEnter') || consumeUiConfirm();
+  if (confirm && !pointerActive) {
+    if (!keyboardFocusVisible) focusedButton = 0;
+    keyboardFocusVisible = true;
+    activateFocused = true;
+  }
 }
 
 export function endUiFrame(): void {
   previousButtonCount = renderedButtons;
-  if (previousButtonCount <= 0) focusedButton = 0;
-  else focusedButton = Math.min(focusedButton, previousButtonCount - 1);
+  if (previousButtonCount <= 0) {
+    focusedButton = 0;
+    keyboardFocusVisible = false;
+  } else {
+    focusedButton = Math.min(focusedButton, previousButtonCount - 1);
+  }
 }
 
 export function resetUiFocus(): void {
@@ -41,6 +59,7 @@ export function resetUiFocus(): void {
   renderedButtons = 0;
   previousButtonCount = 0;
   activateFocused = false;
+  keyboardFocusVisible = false;
 }
 
 export interface UiInput {
@@ -223,7 +242,7 @@ export function button(
   const enabled = opts.enabled ?? true;
   const pointerHover = enabled && inRect(ui, x, y, w, h);
   if (pointerHover && (ui.down || ui.clicked)) focusedButton = buttonIndex;
-  const keyboardFocus = enabled && previousButtonCount > 0 && buttonIndex === focusedButton;
+  const keyboardFocus = keyboardFocusVisible && enabled && previousButtonCount > 0 && buttonIndex === focusedButton;
   const hover = pointerHover || keyboardFocus;
   const pressed = hover && ui.down;
   // contents shift 1px down while pressed; the hit rect never moves

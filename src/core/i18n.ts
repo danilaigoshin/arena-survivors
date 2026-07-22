@@ -3,8 +3,8 @@ import { DICTS } from '../data/locales';
 export type Lang = 'ru' | 'en' | 'es' | 'de' | 'fr' | 'pt' | 'zh' | 'ja';
 
 export const LANGS: { code: Lang; native: string }[] = [
-  { code: 'ru', native: 'Русский' },
   { code: 'en', native: 'English' },
+  { code: 'ru', native: 'Русский' },
   { code: 'es', native: 'Español' },
   { code: 'de', native: 'Deutsch' },
   { code: 'fr', native: 'Français' },

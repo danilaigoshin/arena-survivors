@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { DICTS } from '../src/data/locales';
 import { validateGameContent } from '../src/data/validation';
-import { getLang, setLang, tn, type Lang } from '../src/core/i18n';
+import { getLang, LANGS, setLang, tn, type Lang } from '../src/core/i18n';
 
 function sourceFiles(directory: string): string[] {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -14,6 +14,10 @@ function sourceFiles(directory: string): string[] {
 }
 
 describe('localization coverage', () => {
+  it('lists English first and Russian second in the language picker', () => {
+    expect(LANGS.slice(0, 2).map((language) => language.code)).toEqual(['en', 'ru']);
+  });
+
   it('resolves every literal UI translation key used by the game', () => {
     const usedKeys = new Set<string>();
     const translationCall = /(?<![A-Za-z0-9_])(?:t|tt)\('([^']+)'/g;
