@@ -1,10 +1,13 @@
 /* eslint-disable max-lines */
+import { FULL_TRANSLATIONS } from './fullTranslations';
+
 /**
  * UI dictionaries. 'ru' is the base (all UI keys); other languages override.
  * Content names use prefixed keys: w: weapons, i: items, u: upgrades,
  * c:/cd:/ab:/abd: characters, tal:/tald: talents, aug:/augd: ability augments,
  * br:/brd:/brs: weapon branches, con:/cond:/conr: contracts, obj: objectives,
- * p: perks, t: themes (keyed by RU name), s: sets, d:/dd: difficulties.
+ * p: perks, t: themes (keyed by RU name), s: sets, d:/dd: difficulties,
+ * enemy: Codex enemy names, source: final-blow sources.
  */
 type Dict = Record<string, string>;
 
@@ -152,6 +155,7 @@ const ru: Dict = {
   'hud.waveEndless': 'ВОЛНА {0} · ЭНДЛЕСС',
   'hud.boss': 'БОСС',
   'hud.bossPct': 'БОСС  {0}%',
+  'hud.fps': '{0} FPS · врагов: {1}',
   'run.waveBanner': 'Волна {0}',
   'run.hint1': 'WASD — движение',
   'run.hint1Touch': 'Тяни по правой половине экрана — движение',
@@ -377,6 +381,28 @@ const ru: Dict = {
   'st.pickupRange': 'Радиус сбора',
   'st.luck': 'Удача',
   'st.critChance': 'Шанс крита',
+  // Codex enemies and final-blow sources
+  'enemy:chaser': 'Преследователь',
+  'enemy:runner': 'Бегун',
+  'enemy:tank': 'Танк',
+  'enemy:shooter': 'Стрелок',
+  'enemy:bomber': 'Подрывник',
+  'enemy:shieldbearer': 'Щитоносец',
+  'enemy:summoner': 'Призыватель',
+  'enemy:splitter': 'Делитель',
+  'enemy:slimelet': 'Малый слизень',
+  'enemy:hopper': 'Прыгун',
+  'enemy:frost': 'Ледяной маг',
+  'enemy:sprinter': 'Спринтер',
+  'enemy:brute': 'Громила',
+  'enemy:boss': 'Демон',
+  'enemy:reaper': 'Жнец',
+  'enemy:overlord': 'Владыка',
+  'source:enemy': 'Враг',
+  'source:explosion': 'Взрыв',
+  'source:fire': 'Огонь',
+  'source:projectile': 'Снаряд',
+  'source:frost': 'Лёд',
 };
 
 const en: Dict = {
@@ -524,6 +550,7 @@ const en: Dict = {
   'hud.waveEndless': 'WAVE {0} · ENDLESS',
   'hud.boss': 'BOSS',
   'hud.bossPct': 'BOSS  {0}%',
+  'hud.fps': '{0} FPS · enemies: {1}',
   'run.waveBanner': 'Wave {0}',
   'run.hint1': 'WASD — move',
   'run.hint1Touch': 'Drag on the right half of the screen to move',
@@ -858,15 +885,29 @@ const en: Dict = {
   'conr:horde': 'Enemy materials +8%', 'conr:frenzy': 'Enemy materials +22%',
   'conr:elite_hunt': 'Materials +8%; more elites with 4× drops',
   'obj:hunter': 'Purge', 'obj:collector': 'Supply Run', 'obj:hold': 'Hold the Zone',
+  'enemy:chaser': 'Chaser', 'enemy:runner': 'Runner', 'enemy:tank': 'Tank',
+  'enemy:shooter': 'Shooter', 'enemy:bomber': 'Bomber', 'enemy:shieldbearer': 'Shieldbearer',
+  'enemy:summoner': 'Summoner', 'enemy:splitter': 'Splitter', 'enemy:slimelet': 'Slimelet',
+  'enemy:hopper': 'Hopper', 'enemy:frost': 'Frostcaster', 'enemy:sprinter': 'Sprinter',
+  'enemy:brute': 'Brute', 'enemy:boss': 'Demon', 'enemy:reaper': 'Reaper', 'enemy:overlord': 'Overlord',
+  'source:enemy': 'Enemy', 'source:explosion': 'Explosion', 'source:fire': 'Fire',
+  'source:projectile': 'Projectile', 'source:frost': 'Frost',
 };
 
-const explicitTranslations = new WeakMap<Dict, ReadonlySet<string>>();
+const explicitTranslations = new WeakMap<Dict, Set<string>>();
 
 /** Helper: build a language dict by overriding EN (content) with local UI+content strings. */
 function fromEn(over: Dict): Dict {
   const dict = { ...en, ...over };
   explicitTranslations.set(dict, new Set(Object.keys(over)));
   return dict;
+}
+
+function addTranslations(dict: Dict, translations: Dict): void {
+  Object.assign(dict, translations);
+  const explicit = explicitTranslations.get(dict);
+  if (!explicit) return;
+  for (const key of Object.keys(translations)) explicit.add(key);
 }
 
 const es = fromEn({
@@ -1696,6 +1737,13 @@ const ja = fromEn({
   't:Ледник': '氷河', 't:Пепелище': '燃え跡', 't:Руины': '遺跡', 't:Болото': '沼地',
   't:Крепость': '要塞', 't:Логово демона': '魔王の巣',
 });
+
+addTranslations(es, FULL_TRANSLATIONS.es);
+addTranslations(de, FULL_TRANSLATIONS.de);
+addTranslations(fr, FULL_TRANSLATIONS.fr);
+addTranslations(pt, FULL_TRANSLATIONS.pt);
+addTranslations(zh, FULL_TRANSLATIONS.zh);
+addTranslations(ja, FULL_TRANSLATIONS.ja);
 
 export const DICTS: Record<string, Dict> = { ru, en, es, de, fr, pt, zh, ja };
 

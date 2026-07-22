@@ -9,7 +9,7 @@ import { cloneRunMetrics, type RunMetrics, type RunSummary } from '../core/runMe
 import { CHALLENGES } from '../data/challenges';
 import { weaponById } from '../data/weapons';
 import { FINAL_WAVE } from '../config';
-import type { CharacterDef } from '../data/characters';
+import { CHARACTERS, type CharacterDef } from '../data/characters';
 import { t as tt, tn } from '../core/i18n';
 import { displayFont } from '../render/font';
 import { menuScene } from './menu';
@@ -17,6 +17,7 @@ import { runScene } from './run';
 import { continueToNextWave, progressionScene } from './progressionScene';
 import { GuestSession, HostSession } from '../multiplayer/session';
 import { routeById } from '../data/routes';
+import { ENEMIES } from '../data/enemies';
 
 function formatTime(seconds: number): string {
   const value = Math.max(0, Math.floor(seconds));
@@ -154,7 +155,7 @@ class EndScene implements Scene {
     this.action = null;
     if (action === 'share') {
       const damage = Math.round(this.metrics?.damageDealt.reduce((a, b) => a + b, 0) ?? 0);
-      const result = `${this.won ? '🏆' : '💀'} Arena Survivors · ${tt('end.wave', this.wave, FINAL_WAVE)} · ${tt('end.kills', this.kills)} · ${damage} DMG`;
+      const result = `${this.won ? '🏆' : '💀'} Arena Survivors · ${tt('end.wave', this.wave, FINAL_WAVE)} · ${tt('end.kills', this.kills)} · ${damage} ${tt('shop.damageShort')}`;
       void navigator.clipboard?.writeText(result).then(() => {
         this.shareStatus = tt('end.copied');
       }).catch(() => {
@@ -218,6 +219,16 @@ class EndScene implements Scene {
     }
   }
 
+  private damageSourceName(id: string): string {
+    const enemy = ENEMIES.find((entry) => entry.id === id);
+    return enemy ? tn('enemy', enemy.id, enemy.id) : tn('source', id, id);
+  }
+
+  private masteryName(id: string): string {
+    const character = CHARACTERS.find((entry) => entry.id === id);
+    return character ? tn('c', character.id, character.name) : this.weaponName(id);
+  }
+
   private renderContent(ctx: CanvasRenderingContext2D, w: number, h: number, ui: UiInput): void {
     const time = performance.now() / 1000;
     sceneBackground(ctx, w, h, this.won ? '#14241a' : '#241418', '#0a0a10');
@@ -274,7 +285,7 @@ class EndScene implements Scene {
     if (!this.won && metrics?.lastDamageSource[0]) {
       ctx.fillStyle = '#ff8a98';
       ctx.font = '12px system-ui, sans-serif';
-      ctx.fillText(tt('end.lastHit', metrics.lastDamageSource[0]), leftX, panelY + panelH - 56, 330);
+      ctx.fillText(tt('end.lastHit', this.damageSourceName(metrics.lastDamageSource[0])), leftX, panelY + panelH - 56, 330);
     }
     ctx.fillStyle = '#b18cff';
     ctx.font = 'bold 14px system-ui, sans-serif';
@@ -326,7 +337,7 @@ class EndScene implements Scene {
       const challenge = CHALLENGES.find((entry) => entry.id === id);
       if (challenge) notices.push(`✓ ${tn('challenge', challenge.id, challenge.name)}  +${challenge.reward}`);
     }
-    for (const entry of this.progression?.masteryLevels ?? []) notices.push(`↑ ${entry.id}: ${entry.before} → ${entry.after}`);
+    for (const entry of this.progression?.masteryLevels ?? []) notices.push(`↑ ${this.masteryName(entry.id)}: ${entry.before} → ${entry.after}`);
     if ((this.progression?.newCodexEntries.length ?? 0) > 0) notices.push(tt('end.codexNew', this.progression!.newCodexEntries.length));
     if (notices.length === 0) notices.push(tt('end.progressHint'));
     notices.slice(0, 4).forEach((notice, index) => {

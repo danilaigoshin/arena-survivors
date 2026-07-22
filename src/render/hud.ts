@@ -14,6 +14,7 @@ import { branchAttackSpeedMultiplier } from '../data/weaponBranches';
 import { WAVE_OBJECTIVES } from '../data/objectives';
 import type { PlayerSlot } from '../multiplayer/types';
 import { xpToNext } from '../systems/squad';
+import { keyFor, readableKey } from '../core/settings';
 
 export function renderHud(ctx: CanvasRenderingContext2D, state: RunState, viewport: ViewportMetrics, localPlayerSlot: PlayerSlot): void {
   const p = state.playerBySlot(localPlayerSlot) ?? state.players[0];
@@ -251,7 +252,7 @@ export function renderHud(ctx: CanvasRenderingContext2D, state: RunState, viewpo
     }
   }
 
-  // ── ability: desktop slot (Space) or big touch button ──
+  // ── ability: desktop slot (configured key) or big touch button ──
   const ab = p.character.ability;
   const abilityActive = p.abilityActiveT > 0;
   const activeFrac = abilityActive ? p.abilityActiveT / p.abilityDuration() : 0;
@@ -358,7 +359,7 @@ export function renderHud(ctx: CanvasRenderingContext2D, state: RunState, viewpo
     ctx.fillStyle = abilityActive ? '#ffd23e' : p.abilityRecoveryT > 0 ? '#ff7040' : p.abilityCd <= 0 ? '#8be9fd' : '#667';
     ctx.font = 'bold 10px system-ui, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('SPACE', ax + 26, sy + 54);
+    ctx.fillText(readableKey(keyFor('ability')), ax + 26, sy + 54);
   }
 
   // ── boss hp bar ──

@@ -2,7 +2,7 @@ import { CHARACTERS } from './characters';
 import { EVOLUTIONS } from './evolutions';
 import { ITEMS } from './items';
 import { DICTS, hasExplicitTranslation } from './locales';
-import { WEAPON_CLASS, type WeaponClassId } from './sets';
+import { CLASS_DEFS, WEAPON_CLASS, type WeaponClassId } from './sets';
 import { WEAPONS } from './weapons';
 import { ABILITY_AUGMENTS } from './abilityAugments';
 import { TALENTS } from './talents';
@@ -12,6 +12,10 @@ import { WAVE_OBJECTIVES } from './objectives';
 import { ROUTES } from './routes';
 import { THEMES } from './maps';
 import { CHALLENGES, COSMETICS } from './challenges';
+import { UPGRADES } from './upgrades';
+import { PERKS } from './perks';
+import { DIFFICULTIES } from './difficulty';
+import { ENEMIES } from './enemies';
 
 export function validateGameContent(): string[] {
   const problems: string[] = [];
@@ -78,17 +82,54 @@ export function validateGameContent(): string[] {
   }
 
   for (const key of Object.keys(DICTS.ru)) {
+    if (!DICTS.ru[key].trim()) problems.push(`ru: empty ${key}`);
     if (!DICTS.en[key]) problems.push(`en: missing ${key}`);
+    const ruParams = (DICTS.ru[key].match(/\{\d+\}/g) ?? []).sort().join(',');
+    const enParams = (DICTS.en[key]?.match(/\{\d+\}/g) ?? []).sort().join(',');
+    if (DICTS.en[key] && ruParams !== enParams) problems.push(`en: placeholder mismatch in ${key}`);
   }
-  const fullyLocalizedPrefixes = ['menu.', 'coop.'];
-  const explicitlyLocalizedKeys = Object.keys(DICTS.ru)
-    .filter((key) => fullyLocalizedPrefixes.some((prefix) => key.startsWith(prefix)));
+  const explicitlyLocalizedKeys = Object.keys(DICTS.en);
+  for (const key of explicitlyLocalizedKeys) {
+    if (!DICTS.en[key].trim()) problems.push(`en: empty ${key}`);
+  }
   for (const lang of Object.keys(DICTS)) {
     if (lang === 'ru' || lang === 'en') continue;
     for (const key of explicitlyLocalizedKeys) {
       if (!hasExplicitTranslation(lang, key)) problems.push(`${lang}: missing explicit ${key}`);
+      if (!DICTS[lang][key]?.trim()) problems.push(`${lang}: empty ${key}`);
+      const expectedParams = (DICTS.en[key].match(/\{\d+\}/g) ?? []).sort().join(',');
+      const actualParams = (DICTS[lang][key]?.match(/\{\d+\}/g) ?? []).sort().join(',');
+      if (actualParams !== expectedParams) problems.push(`${lang}: placeholder mismatch in ${key}`);
     }
   }
+
+  const requiredContentKeys = [
+    ...CHARACTERS.flatMap((character) => [
+      `c:${character.id}`, `cd:${character.id}`,
+      `ab:${character.ability.id}`, `abd:${character.ability.id}`,
+    ]),
+    ...WEAPONS.map((weapon) => `w:${weapon.id}`),
+    ...ITEMS.map((item) => `i:${item.id}`),
+    ...UPGRADES.map((upgrade) => `u:${upgrade.id}`),
+    ...PERKS.map((perk) => `p:${perk.id}`),
+    ...Object.values(CLASS_DEFS).map((weaponClass) => `s:${weaponClass.id}`),
+    ...DIFFICULTIES.flatMap((difficulty) => [`d:${difficulty.id}`, `dd:${difficulty.id}`]),
+    ...THEMES.map((theme) => `t:${theme.name}`),
+    ...ENEMIES.map((enemy) => `enemy:${enemy.id}`),
+    ...CHALLENGES.flatMap((challenge) => [`challenge:${challenge.id}`, `challenged:${challenge.id}`]),
+    ...COSMETICS.map((cosmetic) => `cos:${cosmetic.id}`),
+    ...ROUTES.flatMap((route) => [`route:${route.id}`, `routed:${route.id}`, `router:${route.id}`]),
+    ...TALENTS.flatMap((talent) => [`tal:${talent.id}`, `tald:${talent.id}`]),
+    ...ABILITY_AUGMENTS.flatMap((augment) => [`aug:${augment.id}`, `augd:${augment.id}`]),
+    ...WEAPON_BRANCHES.flatMap((branch) => [`br:${branch.id}`, `brd:${branch.id}`, `brs:${branch.id}`]),
+    ...WAVE_CONTRACTS.flatMap((contract) => [`con:${contract.id}`, `cond:${contract.id}`, `conr:${contract.id}`]),
+    ...Object.values(WAVE_OBJECTIVES).map((objective) => `obj:${objective.id}`),
+    'source:enemy', 'source:explosion', 'source:fire', 'source:projectile', 'source:frost',
+  ];
+  const dictionaryOnlyKeys = [
+    ...ENEMIES.map((enemy) => `enemy:${enemy.id}`),
+    'source:enemy', 'source:explosion', 'source:fire', 'source:projectile', 'source:frost',
+  ];
 
   for (const [lang, dict] of Object.entries(DICTS)) {
     for (const key of [
@@ -98,31 +139,11 @@ export function validateGameContent(): string[] {
     ]) {
       if (!dict[key]) problems.push(`${lang}: missing ${key}`);
     }
-    if (lang === 'ru') continue;
-    for (const character of CHARACTERS) {
-      if (!dict[`ab:${character.ability.id}`]) problems.push(`${lang}: missing ab:${character.ability.id}`);
-      if (!dict[`abd:${character.ability.id}`]) problems.push(`${lang}: missing abd:${character.ability.id}`);
+    if (lang === 'ru') {
+      for (const key of dictionaryOnlyKeys) if (!dict[key]) problems.push(`${lang}: missing ${key}`);
+      continue;
     }
-    for (const talent of TALENTS) {
-      if (!dict[`tal:${talent.id}`]) problems.push(`${lang}: missing tal:${talent.id}`);
-      if (!dict[`tald:${talent.id}`]) problems.push(`${lang}: missing tald:${talent.id}`);
-    }
-    for (const augment of ABILITY_AUGMENTS) {
-      if (!dict[`aug:${augment.id}`]) problems.push(`${lang}: missing aug:${augment.id}`);
-      if (!dict[`augd:${augment.id}`]) problems.push(`${lang}: missing augd:${augment.id}`);
-    }
-    for (const branch of WEAPON_BRANCHES) {
-      if (!dict[`br:${branch.id}`]) problems.push(`${lang}: missing br:${branch.id}`);
-      if (!dict[`brd:${branch.id}`]) problems.push(`${lang}: missing brd:${branch.id}`);
-      if (!dict[`brs:${branch.id}`]) problems.push(`${lang}: missing brs:${branch.id}`);
-    }
-    for (const contract of WAVE_CONTRACTS) {
-      if (!dict[`con:${contract.id}`]) problems.push(`${lang}: missing con:${contract.id}`);
-      if (!dict[`cond:${contract.id}`]) problems.push(`${lang}: missing cond:${contract.id}`);
-      if (!dict[`conr:${contract.id}`]) problems.push(`${lang}: missing conr:${contract.id}`);
-    }
-    for (const objective of Object.values(WAVE_OBJECTIVES)) if (!dict[`obj:${objective.id}`]) problems.push(`${lang}: missing obj:${objective.id}`);
-    for (const weapon of WEAPONS) if (!dict[`w:${weapon.id}`]) problems.push(`${lang}: missing w:${weapon.id}`);
+    for (const key of requiredContentKeys) if (!dict[key]) problems.push(`${lang}: missing ${key}`);
   }
 
   const routeIds = new Set<string>();

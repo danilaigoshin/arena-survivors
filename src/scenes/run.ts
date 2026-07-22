@@ -777,7 +777,7 @@ class RunScene implements Scene {
     playSfx('click');
   }
 
-  /** Character active ability on Space. */
+  /** Activates the character's bound active ability. */
   private useAbility(game: Game, p: Player): void {
     const ab = p.character.ability;
     game.state.metrics.abilityUses[p.slot]++;
@@ -998,9 +998,9 @@ class RunScene implements Scene {
       ctx.font = '12px monospace';
       ctx.textAlign = 'right';
       ctx.textBaseline = 'top';
-      ctx.fillText(`${game.fps} fps  враги: ${game.state.enemies.count}`, w - 10, h - 18);
+      ctx.fillText(t('hud.fps', game.fps, game.state.enemies.count), w - 10, h - 18);
       const metrics = game.networkSession?.metrics;
-      if (metrics) {
+      if (import.meta.env.DEV && metrics) {
         ctx.fillText(
           `rtt ${metrics.rtt.toFixed(0)}ms · snap ${metrics.snapshotBytes}b/${metrics.snapshotSendMs.toFixed(1)}ms`
           + ` · pending ${metrics.snapshotPending ? 1 : 0} · interp ${metrics.interpolationAge.toFixed(0)}ms`,

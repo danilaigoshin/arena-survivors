@@ -43,6 +43,5 @@ export function t(key: string, ...params: (string | number)[]): string {
 
 /** Content name (weapon/item/upgrade/…): dictionary override or the data's own (Russian) string. */
 export function tn(prefix: string, id: string, fallback: string): string {
-  if (lang === 'ru') return fallback;
   return DICTS[lang]?.[`${prefix}:${id}`] ?? fallback;
 }
