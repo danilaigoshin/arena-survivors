@@ -80,10 +80,12 @@ export function validateGameContent(): string[] {
   for (const key of Object.keys(DICTS.ru)) {
     if (!DICTS.en[key]) problems.push(`en: missing ${key}`);
   }
-  const menuKeys = Object.keys(DICTS.ru).filter((key) => key.startsWith('menu.'));
+  const fullyLocalizedPrefixes = ['menu.', 'coop.'];
+  const explicitlyLocalizedKeys = Object.keys(DICTS.ru)
+    .filter((key) => fullyLocalizedPrefixes.some((prefix) => key.startsWith(prefix)));
   for (const lang of Object.keys(DICTS)) {
     if (lang === 'ru' || lang === 'en') continue;
-    for (const key of menuKeys) {
+    for (const key of explicitlyLocalizedKeys) {
       if (!hasExplicitTranslation(lang, key)) problems.push(`${lang}: missing explicit ${key}`);
     }
   }
