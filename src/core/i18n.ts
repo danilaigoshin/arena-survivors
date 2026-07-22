@@ -34,9 +34,9 @@ export function setLang(l: Lang): void {
   if (typeof localStorage !== 'undefined') localStorage.setItem(KEY, l);
 }
 
-/** UI string by key; params replace {0}, {1}… Falls back ru → key. */
+/** UI string by key; params replace {0}, {1}… Non-Russian locales fall back to English. */
 export function t(key: string, ...params: (string | number)[]): string {
-  let s = DICTS[lang]?.[key] ?? DICTS.ru[key] ?? key;
+  let s = DICTS[lang]?.[key] ?? (lang === 'ru' ? DICTS.ru[key] : DICTS.en[key]) ?? DICTS.ru[key] ?? key;
   for (let i = 0; i < params.length; i++) s = s.replace(`{${i}}`, String(params[i]));
   return s;
 }

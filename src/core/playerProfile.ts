@@ -4,10 +4,12 @@ import type { PlayerProfile, SerializedPlayerProfile } from '../multiplayer/type
 export class StaticPlayerProfile implements PlayerProfile {
   private readonly perkLevels: Readonly<Record<string, number>>;
   private readonly unlockedIds: ReadonlySet<string>;
+  private readonly selectedCosmetic: string;
 
   constructor(serialized: SerializedPlayerProfile = { perkLevels: {}, unlockedIds: [] }) {
     this.perkLevels = { ...serialized.perkLevels };
     this.unlockedIds = new Set(serialized.unlockedIds);
+    this.selectedCosmetic = serialized.cosmeticId ?? 'none';
   }
 
   perkLevel(id: string): number {
@@ -18,10 +20,15 @@ export class StaticPlayerProfile implements PlayerProfile {
     return this.unlockedIds.has(id);
   }
 
+  cosmeticId(): string {
+    return this.selectedCosmetic;
+  }
+
   serialize(): SerializedPlayerProfile {
     return {
       perkLevels: { ...this.perkLevels },
       unlockedIds: [...this.unlockedIds],
+      cosmeticId: this.selectedCosmetic,
     };
   }
 }
@@ -31,6 +38,7 @@ export function serializeLocalPlayerProfile(): SerializedPlayerProfile {
   return {
     perkLevels: { ...meta.perks },
     unlockedIds: [...meta.unlocked],
+    cosmeticId: meta.cosmetics.selected,
   };
 }
 

@@ -50,7 +50,7 @@ function explodeProjectile(state: RunState, pr: Projectile, def: WeaponDef, proj
       pr.x,
       pr.y,
       0,
-      { ownerPlayerSlot: pr.ownerPlayerSlot, x: pr.x, y: pr.y },
+      { ownerPlayerSlot: pr.ownerPlayerSlot, x: pr.x, y: pr.y, weaponId: pr.style },
     );
     applyWeaponStatus(e, projectile.status, pr.damage / Math.max(1, def.damage), pr.ownerPlayerSlot);
   });
@@ -239,7 +239,7 @@ export function updateProjectiles(state: RunState, dt: number): void {
           pr.prevX,
           pr.prevY,
           0,
-          { ownerPlayerSlot: pr.ownerPlayerSlot, x: pr.prevX, y: pr.prevY },
+          { ownerPlayerSlot: pr.ownerPlayerSlot, x: pr.prevX, y: pr.prevY, weaponId: pr.style },
         );
         if (def && projectile) applyWeaponStatus(e, projectile.status, pr.damage / Math.max(1, def.damage), pr.ownerPlayerSlot);
         if (boomerang) {
@@ -260,7 +260,7 @@ export function updateProjectiles(state: RunState, dt: number): void {
       for (const player of state.alivePlayers()) {
         const rr = player.radius + pr.radius;
         if (dist2(player.x, player.y, pr.x, pr.y) <= rr * rr) {
-          damagePlayer(state, player, pr.damage);
+          damagePlayer(state, player, pr.damage, pr.style || 'projectile');
           if (pr.style === 'frost') player.slowT = 1.5;
           state.projectiles.free(i);
           break;
@@ -309,7 +309,7 @@ export function enemyContactDamage(state: RunState): void {
       if (!e.active || e.hp <= 0 || e.spawnT > 0) return;
       const rr = e.radius + player.radius;
       if (dist2(e.x, e.y, player.x, player.y) <= rr * rr) {
-        damagePlayer(state, player, e.contactDamage);
+        damagePlayer(state, player, e.contactDamage, e.def.id);
       }
     });
   }

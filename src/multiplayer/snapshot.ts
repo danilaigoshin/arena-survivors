@@ -141,6 +141,8 @@ export interface FrameSnapshot extends SnapshotMetadata {
   squadXp: number;
   squadLevel: number;
   squadMaterials: number;
+  resonance: number;
+  resonanceActiveT: number;
   bossUid: number;
   bossDead: boolean;
   vacuum: boolean;
@@ -277,6 +279,8 @@ export function captureFrameSnapshot(state: RunState, metadata: SnapshotMetadata
     squadXp: state.squad.xp,
     squadLevel: state.squad.level,
     squadMaterials: state.squad.materials,
+    resonance: state.resonance,
+    resonanceActiveT: state.resonanceActiveT,
     bossUid: state.bossUid,
     bossDead: state.bossDead,
     vacuum: state.vacuum,
@@ -399,6 +403,8 @@ export function encodeFrameSnapshot(snapshot: FrameSnapshot): ArrayBuffer {
   writer.f32(snapshot.squadXp);
   writer.u16(snapshot.squadLevel);
   writer.u32(snapshot.squadMaterials);
+  writer.f32(snapshot.resonance);
+  writer.f32(snapshot.resonanceActiveT);
   writer.u32(snapshot.bossUid);
   writer.u8(flags(snapshot.bossDead, snapshot.vacuum));
   writer.u32(snapshot.waveMaterials);
@@ -567,6 +573,8 @@ export function decodeFrameSnapshot(buffer: ArrayBuffer): FrameSnapshot {
   const squadLevel = reader.u16();
   if (squadLevel < 1) throw new Error('invalid squad level');
   const squadMaterials = reader.u32();
+  const resonance = Math.max(0, Math.min(100, reader.f32()));
+  const resonanceActiveT = Math.max(0, reader.f32());
   const bossUid = reader.u32();
   const runFlags = reader.u8();
   const waveMaterials = reader.u32();
@@ -769,6 +777,8 @@ export function decodeFrameSnapshot(buffer: ArrayBuffer): FrameSnapshot {
     squadXp,
     squadLevel,
     squadMaterials,
+    resonance,
+    resonanceActiveT,
     bossUid,
     bossDead: (runFlags & 1) !== 0,
     vacuum: (runFlags & 2) !== 0,
@@ -793,6 +803,8 @@ export function applySnapshotToRunState(state: RunState, snapshot: FrameSnapshot
   state.squad.xp = snapshot.squadXp;
   state.squad.level = snapshot.squadLevel;
   state.squad.materials = snapshot.squadMaterials;
+  state.resonance = snapshot.resonance;
+  state.resonanceActiveT = snapshot.resonanceActiveT;
   state.bossUid = snapshot.bossUid;
   state.bossDead = snapshot.bossDead;
   state.vacuum = snapshot.vacuum;

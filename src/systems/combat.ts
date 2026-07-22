@@ -16,6 +16,7 @@ import type { Player } from '../entities/player';
 import type { PlayerSlot } from '../multiplayer/types';
 import { emitPresentationEvent } from '../multiplayer/presentationBus';
 import { applyEnemyRunScaling } from './enemyScaling';
+import { recordDamage } from '../core/runMetrics';
 
 const dir = { x: 0, y: 0 };
 const chainHitIndices = new Int32Array(8);
@@ -27,10 +28,11 @@ export interface AttackSource {
   ownerPlayerSlot: PlayerSlot | null;
   x: number;
   y: number;
+  weaponId?: string;
 }
 
-export function playerAttackSource(player: Player, x = player.x, y = player.y): AttackSource {
-  return { ownerPlayerSlot: player.slot, x, y };
+export function playerAttackSource(player: Player, x = player.x, y = player.y, weaponId?: string): AttackSource {
+  return { ownerPlayerSlot: player.slot, x, y, weaponId };
 }
 
 const GOO_COLORS: Record<string, string> = {
@@ -67,6 +69,7 @@ export function damageEnemy(
     attackerY = source.y;
   }
   if (owner) rawDmg *= owner.talentDamageMultiplier(e.hp / Math.max(1, e.maxHp), e.isBoss);
+  if (owner && state.resonanceActiveT > 0) rawDmg *= 1.2;
   let dmgMul = crit ? 2 : 1;
   // shieldbearer blocks most damage arriving from the front (he faces the player)
   if (e.def.frontBlock && (flags & DAMAGE_IGNORE_BLOCK) === 0) {
@@ -79,7 +82,9 @@ export function damageEnemy(
     if (dot < -0.35) dmgMul *= 1 - e.def.frontBlock;
   }
   const dmg = Math.max(1, Math.round(rawDmg * dmgMul));
+  const hpBefore = e.hp;
   e.hp -= dmg;
+  if (owner) recordDamage(state.metrics, owner.slot, Math.min(hpBefore, dmg), source?.weaponId ?? 'ability');
   e.hitFlash = 0.1;
   if (!e.isBoss) {
     e.knockX += kbX;
@@ -103,7 +108,15 @@ export function damageEnemy(
   if (e.hp <= 0) {
     e.active = false; // swept at end of step
     state.kills++;
+    state.metrics.enemyKills[e.def.id] = (state.metrics.enemyKills[e.def.id] ?? 0) + 1;
+    if (e.isBoss) state.metrics.bossesKilled++;
     if (e.isBoss) state.bossDead = true;
+    if (owner && state.players.length === 2) {
+      const teammate = state.players.find((player) => player.slot !== owner.slot);
+      if (teammate && !teammate.downed && dist2(owner.x, owner.y, teammate.x, teammate.y) <= 500 * 500) {
+        state.resonance = Math.min(100, state.resonance + (e.isBoss ? 20 : 1));
+      }
+    }
     // Fractional expected drops become a chance, so weak enemies are no longer
     // guaranteed to pay out while elites and bosses still feel rewarding.
     const expected = e.def.materialDrop * (e.elite ? 4 : 1) * ENEMY_MATERIAL_DROP_MULT * (state.activeContract?.materialMult ?? 1) * range(0.85, 1.15);
@@ -223,7 +236,7 @@ export function updateEnemyStatuses(state: RunState, dt: number): void {
   }
 }
 
-export function damagePlayer(state: RunState, p: Player, rawDmg: number): void {
+export function damagePlayer(state: RunState, p: Player, rawDmg: number, source = 'enemy'): void {
   if (p.iframes > 0 || p.hp <= 0) return;
   if (p.tryBlockWithBarrier()) {
     p.iframes = 0.2;
@@ -238,7 +251,10 @@ export function damagePlayer(state: RunState, p: Player, rawDmg: number): void {
     rawDmg * state.difficulty.dmgMult * ENEMY_DAMAGE_MULT * (state.activeContract?.enemyDamageMult ?? 1),
     p.stats.armor,
   );
+  const hpBefore = p.hp;
   p.hp -= dmg;
+  state.metrics.damageTaken[p.slot] += Math.min(hpBefore, dmg);
+  state.metrics.lastDamageSource[p.slot] = source;
   p.momentumT = 0;
   p.iframes = PLAYER_IFRAMES;
   spawnDamageNumber(p.x, p.y - p.radius - 6, dmg);
@@ -310,7 +326,7 @@ function castChainLightning(state: RunState, player: Player, w: WeaponInstance, 
       sourceX,
       sourceY,
       0,
-      playerAttackSource(player, sourceX, sourceY),
+      playerAttackSource(player, sourceX, sourceY, w.def.id),
     );
     sourceX = e.x;
     sourceY = e.y;
@@ -459,7 +475,7 @@ function hitAreaEnemies(state: RunState, area: AreaEffect, radius: number, rawDa
         area.x,
         area.y,
         quiet ? DAMAGE_QUIET | DAMAGE_IGNORE_BLOCK : 0,
-        { ownerPlayerSlot: area.ownerPlayerSlot, x: area.x, y: area.y },
+        { ownerPlayerSlot: area.ownerPlayerSlot, x: area.x, y: area.y, weaponId: area.style },
       );
     }
     applyAreaStatus(e, area);
@@ -492,7 +508,7 @@ export function updateAreaEffects(state: RunState, dt: number): void {
           area.x,
           area.y,
           0,
-          { ownerPlayerSlot: area.ownerPlayerSlot, x: area.x, y: area.y },
+          { ownerPlayerSlot: area.ownerPlayerSlot, x: area.x, y: area.y, weaponId: area.style },
         );
       });
       if (area.ttl <= 0 || area.radius >= area.maxRadius) state.areaEffects.free(i);
@@ -584,7 +600,7 @@ function updateSummons(
           w.summonX[i],
           w.summonY[i],
           0,
-          playerAttackSource(player, w.summonX[i], w.summonY[i]),
+          playerAttackSource(player, w.summonX[i], w.summonY[i], w.def.id),
         );
         w.summonHitCd[i] = summon.hitCooldown / baseSpeedMult;
         w.summonFlash[i] = 0.12;
@@ -648,7 +664,7 @@ export function updateWeapons(state: RunState, dt: number): void {
             p.x,
             p.y,
             0,
-            playerAttackSource(p),
+            playerAttackSource(p, p.x, p.y, def.id),
           );
         });
       }
@@ -729,7 +745,7 @@ export function updateWeapons(state: RunState, dt: number): void {
           p.x,
           p.y,
           0,
-          playerAttackSource(p),
+          playerAttackSource(p, p.x, p.y, def.id),
         );
         applyWeaponStatus(e, def.pulse!.status, dmgMult * tierDmg, p.slot);
       });
@@ -783,7 +799,7 @@ export function updateWeapons(state: RunState, dt: number): void {
             p.x,
             p.y,
             0,
-            playerAttackSource(p),
+            playerAttackSource(p, p.x, p.y, def.id),
           );
         }
       });

@@ -12,11 +12,11 @@ export const UI = 'system-ui, sans-serif';
 
 /** Heading/numeral font. PS2P has a single weight — no bold. */
 export function displayFont(px: number): string {
-  return `${px}px ${DISPLAY}`;
+  return `${Math.round(px * loadSettings().textScale)}px ${DISPLAY}`;
 }
 
 export function uiFont(px: number, weight = ''): string {
-  return `${weight ? `${weight} ` : ''}${px}px ${UI}`;
+  return `${weight ? `${weight} ` : ''}${Math.round(px * loadSettings().textScale)}px ${UI}`;
 }
 
 export function loadFonts(): void {
@@ -33,3 +33,4 @@ export function loadFonts(): void {
       .catch(() => {}); // fall back to system-ui silently
   }
 }
+import { loadSettings } from '../core/settings';

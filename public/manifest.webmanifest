@@ -1,0 +1,19 @@
+{
+  "name": "Arena Survivors",
+  "short_name": "Arena",
+  "description": "A pixel-art arena survival roguelite with solo and two-player co-op.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#0d0d12",
+  "theme_color": "#0d0d12",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

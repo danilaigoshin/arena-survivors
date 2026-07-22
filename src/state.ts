@@ -13,6 +13,7 @@ import type { WaveContractDef } from './data/contracts';
 import type { WaveObjectiveState } from './data/objectives';
 import type { PlayerSlot, SquadState } from './multiplayer/types';
 import { createPendingChoices } from './systems/squad';
+import { createRunMetrics } from './core/runMetrics';
 
 export interface BattlefieldChest {
   uid: number;
@@ -57,6 +58,12 @@ export class RunState {
   firePatches: FirePatch[] = [];
   players: Player[];
   squad: SquadState = { xp: 0, level: 1, materials: 0 };
+  metrics = createRunMetrics();
+  /** Shared co-op meter. Full meter creates a short team damage window. */
+  resonance = 0;
+  resonanceActiveT = 0;
+  /** Region choices made after chapter bosses. */
+  routeIds: string[] = [];
   enemies = new Pool(POOL_ENEMIES, () => new Enemy());
   projectiles = new Pool(POOL_PROJECTILES, () => new Projectile());
   areaEffects = new Pool(POOL_AREA_EFFECTS, () => new AreaEffect());

@@ -1,4 +1,5 @@
 import { emitPresentationEvent } from '../multiplayer/presentationBus';
+import { loadSettings } from '../core/settings';
 
 export type SfxEvent =
   | 'shoot'
@@ -23,6 +24,7 @@ export type SfxEvent =
 let ac: AudioContext | null = null;
 let master: GainNode | null = null;
 let musicGain: GainNode | null = null;
+let sfxGain: GainNode | null = null;
 let muted = typeof localStorage !== 'undefined' && localStorage.getItem('as_muted') === '1';
 let musicOn = typeof localStorage === 'undefined' || localStorage.getItem('as_music') !== '0';
 let musicTimer: number | null = null;
@@ -38,10 +40,13 @@ export function ensureAudio(): void {
   }
   ac = new AudioContext();
   master = ac.createGain();
-  master.gain.value = muted ? 0 : 0.5;
+  master.gain.value = muted ? 0 : loadSettings().masterVolume;
   master.connect(ac.destination);
+  sfxGain = ac.createGain();
+  sfxGain.gain.value = loadSettings().sfxVolume;
+  sfxGain.connect(master);
   musicGain = ac.createGain();
-  musicGain.gain.value = musicOn ? 0.14 : 0;
+  musicGain.gain.value = musicOn ? loadSettings().musicVolume : 0;
   musicGain.connect(master);
   startMusicLoop();
 }
@@ -57,13 +62,22 @@ export function isMusicOn(): boolean {
 export function toggleMute(): void {
   muted = !muted;
   if (typeof localStorage !== 'undefined') localStorage.setItem('as_muted', muted ? '1' : '0');
-  if (master && ac) master.gain.setTargetAtTime(muted ? 0 : 0.5, ac.currentTime, 0.01);
+  if (master && ac) master.gain.setTargetAtTime(muted ? 0 : loadSettings().masterVolume, ac.currentTime, 0.01);
 }
 
 export function toggleMusic(): void {
   musicOn = !musicOn;
   if (typeof localStorage !== 'undefined') localStorage.setItem('as_music', musicOn ? '1' : '0');
-  if (musicGain && ac) musicGain.gain.setTargetAtTime(musicOn ? 0.14 : 0, ac.currentTime, 0.05);
+  if (musicGain && ac) musicGain.gain.setTargetAtTime(musicOn ? loadSettings().musicVolume : 0, ac.currentTime, 0.05);
+}
+
+/** Applies changed volume sliders without rebuilding the audio graph. */
+export function syncAudioSettings(): void {
+  if (!ac) return;
+  const settings = loadSettings();
+  master?.gain.setTargetAtTime(muted ? 0 : settings.masterVolume, ac.currentTime, 0.02);
+  sfxGain?.gain.setTargetAtTime(settings.sfxVolume, ac.currentTime, 0.02);
+  musicGain?.gain.setTargetAtTime(musicOn ? settings.musicVolume : 0, ac.currentTime, 0.05);
 }
 
 interface ToneOpts {
@@ -77,7 +91,7 @@ interface ToneOpts {
 }
 
 function tone({ freq, freqEnd, type = 'square', dur, vol = 0.12, delay = 0, dest }: ToneOpts): void {
-  if (!ac || !master) return;
+  if (!ac || !master || !sfxGain) return;
   const t0 = ac.currentTime + delay;
   const osc = ac.createOscillator();
   const g = ac.createGain();
@@ -86,13 +100,13 @@ function tone({ freq, freqEnd, type = 'square', dur, vol = 0.12, delay = 0, dest
   if (freqEnd) osc.frequency.exponentialRampToValueAtTime(Math.max(30, freqEnd), t0 + dur);
   g.gain.setValueAtTime(vol, t0);
   g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
-  osc.connect(g).connect(dest ?? master);
+  osc.connect(g).connect(dest ?? sfxGain);
   osc.start(t0);
   osc.stop(t0 + dur + 0.02);
 }
 
 function noise(dur: number, vol: number, filterFreq: number, delay = 0, dest?: AudioNode): void {
-  if (!ac || !master) return;
+  if (!ac || !master || !sfxGain) return;
   const t0 = ac.currentTime + delay;
   const len = Math.ceil(ac.sampleRate * dur);
   const buf = ac.createBuffer(1, len, ac.sampleRate);
@@ -107,7 +121,7 @@ function noise(dur: number, vol: number, filterFreq: number, delay = 0, dest?: A
   const g = ac.createGain();
   g.gain.setValueAtTime(vol, t0);
   g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
-  src.connect(f).connect(g).connect(dest ?? master);
+  src.connect(f).connect(g).connect(dest ?? sfxGain);
   src.start(t0);
 }
 

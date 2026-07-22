@@ -16,6 +16,7 @@ import type { PlayerSlot } from '../multiplayer/types';
 import { runScene } from './run';
 import { displayFont } from '../render/font';
 import { menuScene } from './menu';
+import { claimDisconnectedRun, disconnectedRunReward } from '../core/disconnectRecovery';
 
 export type EventKind = 'chest' | 'altar';
 interface PersonalEvent {
@@ -295,6 +296,7 @@ class EventScene implements Scene {
     if (session?.status === 'connection-lost') {
       if (this.connectionExit) {
         this.connectionExit = false;
+        claimDisconnectedRun(game);
         game.networkSession = null;
         game.sessionRole = 'solo';
         void session.close();
@@ -379,7 +381,8 @@ class EventScene implements Scene {
       ctx.font = displayFont(20);
       ctx.textAlign = 'center';
       ctx.fillText(tt('coop.connectionLost'), w / 2, h / 2 - 42);
-      if (button(ctx, game.ui, w / 2 - 120, h / 2 + 20, 240, 50, tt('coop.leave'))) {
+      const recoveryReward = disconnectedRunReward(game);
+      if (button(ctx, game.ui, w / 2 - 150, h / 2 + 20, 300, 50, recoveryReward > 0 ? tt('coop.claimLeave', recoveryReward) : tt('coop.leave'))) {
         this.connectionExit = true;
       }
     }

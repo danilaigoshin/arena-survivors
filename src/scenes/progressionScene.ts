@@ -13,16 +13,40 @@ import { GuestSession, HostSession } from '../multiplayer/session';
 import type { PlayerSlot } from '../multiplayer/types';
 import type { ProgressionPhase } from '../multiplayer/stateProtocol';
 import { menuScene } from './menu';
+import { consumeKeyPress } from '../core/input';
+import { ROUTES, routeById, routesAfterWave, type RouteDef } from '../data/routes';
+import { claimDisconnectedRun, disconnectedRunReward } from '../core/disconnectRecovery';
 
 type ProgressionStep =
   | { kind: 'ability'; choices: AbilityAugmentDef[] }
-  | { kind: 'contract'; choices: (WaveContractDef | null)[] };
+  | { kind: 'contract'; choices: (WaveContractDef | null)[] }
+  | { kind: 'route'; choices: RouteDef[] };
 const augmentById = new Map<string, AbilityAugmentDef>(ABILITY_AUGMENTS.map((choice) => [choice.id, choice]));
 const contractById = new Map<string, WaveContractDef>(WAVE_CONTRACTS.map((choice) => [choice.id, choice]));
+const routeIds = new Set(ROUTES.map((route) => route.id));
+
+function shouldOfferAbilityReward(completedWave: number): boolean {
+  return completedWave === 5 || completedWave === 10 || completedWave === 15;
+}
+
+function applyRoute(game: Game, route: RouteDef): void {
+  const state = game.state;
+  state.routeIds[route.chapter - 1] = route.id;
+  state.metrics.routeIds = [...state.routeIds];
+  if (route.reward.materials) state.squad.materials += route.reward.materials;
+  if (route.reward.maxHp) {
+    for (const player of state.players) {
+      if (player.downed) continue;
+      player.addUpgrade({ maxHp: route.reward.maxHp });
+      player.hp = player.stats.maxHp;
+    }
+  }
+}
 
 class ProgressionScene implements Scene {
-  /** A transition may contain exactly one forced decision. */
+  /** Boss transitions can contain a personal reward followed by a shared route. */
   private step: ProgressionStep | null = null;
+  private queuedSteps: ProgressionStep[] = [];
   private action: number | null = null;
   private finishing = false;
   private networkRevision = 0;
@@ -31,11 +55,13 @@ class ProgressionScene implements Scene {
   private guestSubmittedRevision = 0;
   private waitingForPeer = false;
   private connectionExit = false;
+  private networkRoutePending = false;
 
   enter(game: Game): void {
     const state = game.state;
     const player = game.localPlayer;
     this.step = null;
+    this.queuedSteps = [];
     this.action = null;
     this.finishing = false;
     this.networkRevision = 0;
@@ -43,6 +69,7 @@ class ProgressionScene implements Scene {
     this.networkSubmitted = [false, false];
     this.guestSubmittedRevision = 0;
     this.waitingForPeer = false;
+    this.networkRoutePending = false;
     // A contract is always scoped to exactly one wave.
     state.activeContract = null;
 
@@ -52,16 +79,19 @@ class ProgressionScene implements Scene {
       return;
     }
 
-    if (state.wave === 5 || state.wave === 10 || state.wave === 15) {
+    const steps: ProgressionStep[] = [];
+    if (shouldOfferAbilityReward(state.wave)) {
       const choices = rollAbilityAugmentChoices(player.character.ability.id, player.abilityAugments, 3);
-      if (choices.length > 0) this.step = { kind: 'ability', choices };
+      if (choices.length > 0) steps.push({ kind: 'ability', choices });
     }
+    const routeChoices = routesAfterWave(state.wave);
+    if (routeChoices.length > 0) steps.push({ kind: 'route', choices: [...routeChoices] });
 
-    // Campaign contract waves are scheduled away from boss rewards, so a
-    // transition never opens a second forced decision.
-    if (!this.step && shouldOfferContract(state.wave + 1)) {
-      this.step = { kind: 'contract', choices: [null, ...rollContractChoices(2)] };
+    if (steps.length === 0 && shouldOfferContract(state.wave + 1)) {
+      steps.push({ kind: 'contract', choices: [null, ...rollContractChoices(2)] });
     }
+    this.step = steps.shift() ?? null;
+    this.queuedSteps = steps;
   }
 
   enterRemote(game: Game, phase: ProgressionPhase): void {
@@ -78,10 +108,16 @@ class ProgressionScene implements Scene {
 
   update(game: Game, _dt: number): void {
     if (this.finishing) return;
+    if (this.step) {
+      for (let i = 0; i < this.step.choices.length; i++) {
+        if (consumeKeyPress(`Digit${i + 1}`) || consumeKeyPress(`Numpad${i + 1}`)) this.action = i;
+      }
+    }
     const session = game.networkSession;
     if (session?.status === 'connection-lost') {
       if (this.connectionExit) {
         this.connectionExit = false;
+        claimDisconnectedRun(game);
         game.networkSession = null;
         game.sessionRole = 'solo';
         void session.close();
@@ -113,18 +149,24 @@ class ProgressionScene implements Scene {
       const augment = step.choices[choice];
       if (!augment) return;
       game.localPlayer.addAbilityAugment(augment.id);
-    } else {
+    } else if (step.kind === 'contract') {
       const contract = step.choices[choice];
       if (contract === undefined) return;
       game.state.activeContract = contract;
+    } else {
+      const route = step.choices[choice];
+      if (!route) return;
+      applyRoute(game, route);
     }
-    this.step = null;
+    this.step = this.queuedSteps.shift() ?? null;
     playSfx('click');
   }
 
   private enterNetworkHost(game: Game, session: HostSession): void {
     const state = game.state;
-    if (state.wave === 5 || state.wave === 10 || state.wave === 15) {
+    const routeChoices = routesAfterWave(state.wave);
+    this.networkRoutePending = routeChoices.length > 0;
+    if (shouldOfferAbilityReward(state.wave)) {
       this.networkSteps = [0, 1].map((rawSlot) => {
         const slot = rawSlot as PlayerSlot;
         const player = state.playerBySlot(slot)!;
@@ -135,6 +177,13 @@ class ProgressionScene implements Scene {
         );
         return choices.length > 0 ? { kind: 'ability' as const, choices } : null;
       }) as [ProgressionStep | null, ProgressionStep | null];
+      if (this.networkSteps.every((step) => step === null) && this.networkRoutePending) {
+        this.beginNetworkRoute(session, routeChoices);
+        return;
+      }
+    } else if (this.networkRoutePending) {
+      this.beginNetworkRoute(session, routeChoices);
+      return;
     } else if (shouldOfferContract(state.wave + 1)) {
       this.networkSteps = [
         { kind: 'contract', choices: [null, ...rollContractChoices(2)] },
@@ -151,14 +200,28 @@ class ProgressionScene implements Scene {
     this.publishNetworkPhase(session);
   }
 
-  private stepFromIds(kind: 'ability' | 'contract', ids: string[]): ProgressionStep | null {
+  private beginNetworkRoute(session: HostSession, choices: readonly RouteDef[]): void {
+    this.networkRoutePending = false;
+    this.networkRevision = session.nextPhaseRevision();
+    this.networkSteps = [{ kind: 'route', choices: [...choices] }, null];
+    this.networkSubmitted = [false, true];
+    this.step = this.networkSteps[0];
+    this.waitingForPeer = false;
+    this.publishNetworkPhase(session);
+  }
+
+  private stepFromIds(kind: 'ability' | 'contract' | 'route', ids: string[]): ProgressionStep | null {
     if (ids.length === 0) return null;
     if (kind === 'ability') {
       const choices = ids.map((id) => augmentById.get(id)).filter((choice): choice is AbilityAugmentDef => !!choice);
       return choices.length === ids.length ? { kind, choices } : null;
     }
-    const choices = ids.map((id) => id === 'none' ? null : contractById.get(id))
-      .filter((choice): choice is WaveContractDef | null => choice !== undefined);
+    if (kind === 'contract') {
+      const choices = ids.map((id) => id === 'none' ? null : contractById.get(id))
+        .filter((choice): choice is WaveContractDef | null => choice !== undefined);
+      return choices.length === ids.length ? { kind, choices } : null;
+    }
+    const choices = ids.map((id) => routeById(id)).filter((choice): choice is RouteDef => !!choice);
     return choices.length === ids.length ? { kind, choices } : null;
   }
 
@@ -199,8 +262,12 @@ class ProgressionScene implements Scene {
       const augment = step.choices[index];
       if (!augment || player.abilityAugments.has(augment.id)) return false;
       player.addAbilityAugment(augment.id);
-    } else {
+    } else if (step.kind === 'contract') {
       game.state.activeContract = step.choices[index] ?? null;
+    } else {
+      const route = step.choices[index];
+      if (!route || !routeIds.has(route.id) || slot !== 0) return false;
+      applyRoute(game, route);
     }
     this.networkSubmitted[slot] = true;
     this.networkSteps[slot] = null;
@@ -242,11 +309,21 @@ class ProgressionScene implements Scene {
       this.step = null;
       this.waitingForPeer = true;
     }
-    if (this.networkSubmitted.every(Boolean)) this.finishNetworkProgression(game, session);
+    if (this.networkSubmitted.every(Boolean)) {
+      if (this.networkRoutePending) {
+        this.beginNetworkRoute(session, routesAfterWave(game.state.wave));
+        return;
+      }
+      this.finishNetworkProgression(game, session);
+    }
   }
 
   private updateNetworkGuest(game: Game, session: GuestSession): void {
     const phase = session.phaseState;
+    if (phase?.phase === 'progression' && phase.phaseRevision > this.networkRevision) {
+      this.enterRemote(game, phase);
+      return;
+    }
     if (phase?.phase === 'run' && phase.phaseRevision > this.networkRevision) {
       game.state.wave = phase.wave;
       runScene.enterWave(game);
@@ -282,7 +359,8 @@ class ProgressionScene implements Scene {
       ctx.font = displayFont(20);
       ctx.textAlign = 'center';
       ctx.fillText(tt('coop.connectionLost'), w / 2, h / 2 - 42);
-      if (button(ctx, game.ui, w / 2 - 120, h / 2 + 20, 240, 50, tt('coop.leave'))) {
+      const recoveryReward = disconnectedRunReward(game);
+      if (button(ctx, game.ui, w / 2 - 150, h / 2 + 20, 300, 50, recoveryReward > 0 ? tt('coop.claimLeave', recoveryReward) : tt('coop.leave'))) {
         this.connectionExit = true;
       }
     }
@@ -302,14 +380,18 @@ class ProgressionScene implements Scene {
       return;
     }
 
-    const accent = step.kind === 'ability' ? '#b18cff' : '#ffd23e';
+    const accent = step.kind === 'ability' ? '#b18cff' : step.kind === 'route' ? '#8be9fd' : '#ffd23e';
     ctx.save();
     ctx.shadowColor = `${accent}66`;
     ctx.shadowBlur = 24;
     ctx.fillStyle = accent;
     ctx.font = displayFont(22);
     ctx.textAlign = 'center';
-    const title = step.kind === 'ability' ? tt('prog.abilityTitle') : tt('prog.contractTitle');
+    const title = step.kind === 'ability'
+      ? tt('prog.abilityTitle')
+      : step.kind === 'route'
+        ? tt('prog.routeTitle')
+        : tt('prog.contractTitle');
     ctx.fillText(title, w / 2, 46);
     ctx.restore();
 
@@ -318,11 +400,13 @@ class ProgressionScene implements Scene {
     ctx.textAlign = 'center';
     const subtitle = step.kind === 'ability'
       ? tt('prog.abilitySub', game.state.wave)
-      : tt('prog.contractSub', game.state.wave + 1);
+      : step.kind === 'route'
+        ? tt('prog.routeSub', game.state.wave + 1, game.state.wave + 5)
+        : tt('prog.contractSub', game.state.wave + 1);
     ctx.fillText(subtitle, w / 2, 78, w - 40);
 
     if (step.kind === 'ability') drawSprite(ctx, game.localPlayer.character.sprite, w / 2, 116, 46);
-    else drawIcon(ctx, 'i_wave', w / 2, 116, 42);
+    else drawIcon(ctx, step.kind === 'route' ? 'i_speed' : 'i_wave', w / 2, 116, 42);
 
     const choices = step.choices;
     const count = choices.length;
@@ -353,6 +437,12 @@ class ProgressionScene implements Scene {
         name = tn('aug', augment.id, augment.name);
         desc = tn('augd', augment.id, augment.desc);
         note = tt('prog.permanent');
+      } else if (step.kind === 'route') {
+        const route = choice as RouteDef;
+        icon = route.icon;
+        name = tn('route', route.id, route.name);
+        desc = tn('routed', route.id, route.desc);
+        note = tn('router', route.id, route.rewardText);
       } else if (choice === null) {
         icon = 'i_armor';
         name = tt('contract.none');
@@ -374,7 +464,7 @@ class ProgressionScene implements Scene {
       ctx.fillStyle = '#b8b8ca';
       ctx.font = '13px system-ui, sans-serif';
       drawWrappedCentered(ctx, desc, x + cardW / 2, y + 126, cardW - 30, 18, 4);
-      ctx.fillStyle = step.kind === 'contract' && choice !== null ? '#9fdca0' : '#77778c';
+      ctx.fillStyle = (step.kind === 'contract' && choice !== null) || step.kind === 'route' ? '#9fdca0' : '#77778c';
       ctx.font = 'bold 12px system-ui, sans-serif';
       drawWrappedCentered(ctx, note, x + cardW / 2, y + 202, cardW - 28, 16, 2);
       if (button(ctx, ui, x + 22, y + cardH - 50, cardW - 44, 36, tt('prog.choose'), { primary: hover })) this.action = i;

@@ -1,4 +1,4 @@
-export const NETWORK_VERSION = 1;
+export const NETWORK_VERSION = 2;
 export const MAX_PLAYERS = 2;
 
 export type PlayerSlot = 0 | 1;
@@ -13,11 +13,13 @@ export interface SquadState {
 export interface PlayerProfile {
   perkLevel(id: string): number;
   isUnlocked(id: string): boolean;
+  cosmeticId(): string;
 }
 
 export interface SerializedPlayerProfile {
   perkLevels: Record<string, number>;
   unlockedIds: string[];
+  cosmeticId?: string;
 }
 
 export interface PlayerInputState {

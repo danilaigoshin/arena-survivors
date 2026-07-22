@@ -15,6 +15,24 @@ export interface Transport {
 
 type Callback<T extends unknown[]> = (...args: T) => void;
 
+function roomConfig(): { appId: string; turnConfig?: RTCIceServer[] } {
+  const urls = (import.meta.env.VITE_TURN_URLS as string | undefined)
+    ?.split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  if (!urls?.length) return { appId: NETWORK_APP_ID };
+  const username = (import.meta.env.VITE_TURN_USERNAME as string | undefined)?.trim();
+  const credential = (import.meta.env.VITE_TURN_CREDENTIAL as string | undefined)?.trim();
+  return {
+    appId: NETWORK_APP_ID,
+    turnConfig: [{
+      urls,
+      ...(username ? { username } : {}),
+      ...(credential ? { credential } : {}),
+    }],
+  };
+}
+
 function subscribe<T extends unknown[]>(callbacks: Set<Callback<T>>, callback: Callback<T>): () => void {
   callbacks.add(callback);
   return () => callbacks.delete(callback);
@@ -65,7 +83,7 @@ export class TrysteroTransport implements Transport {
   static async join(roomCode: string): Promise<TrysteroTransport> {
     if (typeof RTCPeerConnection === 'undefined') throw new Error('webrtc-unsupported');
     const { joinRoom } = await import('trystero');
-    const room = joinRoom({ appId: NETWORK_APP_ID }, roomCode);
+    const room = joinRoom(roomConfig(), roomCode);
     return new TrysteroTransport(room);
   }
 

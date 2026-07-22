@@ -12,7 +12,7 @@ export function updateBomberExplosions(state: RunState, dt: number): void {
     for (const player of state.alivePlayers()) {
       const radius = explosion.radius + player.radius;
       if ((explosion.x - player.x) ** 2 + (explosion.y - player.y) ** 2 <= radius * radius) {
-        damagePlayer(state, player, explosion.damage);
+        damagePlayer(state, player, explosion.damage, 'explosion');
       }
     }
 
@@ -56,7 +56,7 @@ export function updateFirePatches(state: RunState, dt: number): void {
     for (const player of state.alivePlayers()) {
       const radius = 26 + player.radius;
       if ((patch.x - player.x) ** 2 + (patch.y - player.y) ** 2 <= radius * radius) {
-        damagePlayer(state, player, 6);
+        damagePlayer(state, player, 6, 'fire');
       }
     }
   }

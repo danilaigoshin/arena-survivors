@@ -12,6 +12,7 @@ import { loadMeta, isUnlocked, tryUnlock } from '../core/save';
 import { runScene } from './run';
 import { menuScene } from './menu';
 import { displayFont } from '../render/font';
+import { clearCheckpoint } from '../core/checkpoint';
 import { CLASS_DEFS } from '../data/sets';
 
 const HEADER_H = 108;
@@ -57,6 +58,7 @@ class CharSelectScene implements Scene {
       const c = this.chosen;
       this.chosen = null;
       playSfx('click');
+      clearCheckpoint();
       game.newRun(c);
       game.state.difficulty = this.difficulty;
       runScene.enterWave(game);

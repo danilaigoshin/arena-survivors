@@ -9,6 +9,9 @@ import { TALENTS } from './talents';
 import { CAMPAIGN_CONTRACT_WAVES, WAVE_CONTRACTS } from './contracts';
 import { WEAPON_BRANCHES } from './weaponBranches';
 import { WAVE_OBJECTIVES } from './objectives';
+import { ROUTES } from './routes';
+import { THEMES } from './maps';
+import { CHALLENGES, COSMETICS } from './challenges';
 
 export function validateGameContent(): string[] {
   const problems: string[] = [];
@@ -107,6 +110,28 @@ export function validateGameContent(): string[] {
     }
     for (const objective of Object.values(WAVE_OBJECTIVES)) if (!dict[`obj:${objective.id}`]) problems.push(`${lang}: missing obj:${objective.id}`);
     for (const weapon of WEAPONS) if (!dict[`w:${weapon.id}`]) problems.push(`${lang}: missing w:${weapon.id}`);
+  }
+
+  const routeIds = new Set<string>();
+  for (const chapter of [1, 2, 3] as const) {
+    if (ROUTES.filter((route) => route.chapter === chapter).length !== 2) {
+      problems.push(`chapter ${chapter}: expected exactly two routes`);
+    }
+  }
+  for (const route of ROUTES) {
+    if (routeIds.has(route.id)) problems.push(`duplicate route id: ${route.id}`);
+    routeIds.add(route.id);
+    if (route.themeIndices.length !== 5) problems.push(`${route.id}: expected five route themes`);
+    if (route.themeIndices.some((index) => !Number.isInteger(index) || !THEMES[index])) {
+      problems.push(`${route.id}: invalid theme index`);
+    }
+  }
+  const cosmeticIds = new Set<string>(COSMETICS.map((cosmetic) => cosmetic.id));
+  const challengeIds = new Set<string>();
+  for (const challenge of CHALLENGES) {
+    if (challengeIds.has(challenge.id)) problems.push(`duplicate challenge id: ${challenge.id}`);
+    challengeIds.add(challenge.id);
+    if (challenge.cosmetic && !cosmeticIds.has(challenge.cosmetic)) problems.push(`${challenge.id}: unknown cosmetic reward`);
   }
   return problems;
 }

@@ -62,6 +62,7 @@ export function updateWaveObjective(state: RunState, dt: number): void {
 
   if (objective.progress >= objective.target) {
     objective.completed = true;
+    state.metrics.objectivesCompleted++;
     state.squad.materials += objective.reward;
     const player = state.alivePlayers()[0] ?? state.players[0];
     spawnRing(objective.kind === 'hold' ? objective.x : player.x, objective.kind === 'hold' ? objective.y : player.y, '#8dff9a');

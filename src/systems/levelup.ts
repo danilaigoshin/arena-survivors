@@ -44,6 +44,7 @@ export function updatePickups(state: RunState, dt: number): void {
     if (dist2(pk.x, pk.y, collector.x, collector.y) <= collectR * collectR) {
       state.squad.materials += pk.value;
       state.waveMaterials += pk.value;
+      state.metrics.materialsCollected += pk.value;
       gainXp(state, pk.value);
       const pulses = collector.collectForMagneticPulse(pk.value);
       for (let pulse = 0; pulse < pulses; pulse++) {
@@ -90,6 +91,7 @@ export function updateRegen(state: RunState, dt: number): void {
       const applied = Math.min(heal, player.stats.maxHp - player.hp);
       if (applied > 0) {
         player.hp += applied;
+        state.metrics.healing[player.slot] += applied;
         spawnDamageNumber(player.x, player.y - player.radius - 6, applied, false, true);
         emitPresentationEvent({
           type: 'damage',

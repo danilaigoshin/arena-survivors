@@ -26,6 +26,8 @@ function makeState(): RunState {
   weapon.chainFxY[1] = 40;
   state.players[0].weapons.push(weapon);
   state.squad = { xp: 4, level: 2, materials: 11 };
+  state.resonance = 64;
+  state.resonanceActiveT = 3.5;
   state.waveMaterials = 5;
   state.activeContract = WAVE_CONTRACTS[0];
   state.objective = {
@@ -76,6 +78,8 @@ describe('binary frame snapshots', () => {
     ]);
     expect(decoded.objective).toEqual(frame.objective);
     expect(decoded.contractIndex).toBe(0);
+    expect(decoded.resonance).toBe(64);
+    expect(decoded.resonanceActiveT).toBe(3.5);
     expect(decoded.projectiles).toEqual(frame.projectiles);
     expect(decoded.projectiles[1].styleIndex).toBeGreaterThan(0);
     expect(decoded.areas).toEqual(frame.areas);

@@ -187,13 +187,33 @@ describe('network session lifecycle', () => {
         won: true,
         difficultyId: 'normal',
         shardsEarned: 17,
+        level: 4,
+        characterIds: ['potato', 'potato'],
+        weaponIds: ['pistol'],
+        playerCount: 2,
+        metrics: {
+          duration: 90,
+          damageDealt: [120, 80],
+          damageTaken: [20, 15],
+          healing: [0, 0],
+          abilityUses: [2, 3],
+          materialsCollected: 22,
+          objectivesCompleted: 1,
+          bossesKilled: 1,
+          maxWeapons: [2, 2],
+          weaponDamage: [{ pistol: 120 }, { pistol: 80 }],
+          enemyKills: { chaser: 42 },
+          evolvedWeapons: [],
+          routeIds: [],
+          lastDamageSource: ['', ''],
+        },
       },
     };
     transport.control('host', message);
     transport.control('host', message);
 
     expect(loadMeta()).toMatchObject({
-      shards: 17,
+      shards: 312,
       stats: {
         runs: 1,
         wins: 1,
