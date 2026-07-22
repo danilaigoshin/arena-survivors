@@ -1,10 +1,21 @@
 import type { Game, Scene } from '../game';
-import { button, responsiveScene, sceneBackground, type UiInput } from '../render/ui';
+import {
+  button,
+  responsiveScene,
+  sceneBackground,
+  type UiInput,
+} from '../render/ui';
 import { drawSprite, drawShadow } from '../render/sprites';
 import { CHARACTERS } from '../data/characters';
-import { ensureAudio, toggleMute, toggleMusic, isMuted, isMusicOn } from '../render/audio';
+import {
+  ensureAudio,
+  toggleMute,
+  toggleMusic,
+  isMuted,
+  isMusicOn,
+} from '../render/audio';
 import { isTouchDevice } from '../core/input';
-import { t as tt, tn, getLang, setLang, LANGS } from '../core/i18n';
+import { t as tt, getLang, setLang, LANGS } from '../core/i18n';
 import { displayFont } from '../render/font';
 import { charSelectScene } from './charSelect';
 import { metaScene } from './metaScene';
@@ -20,7 +31,13 @@ import { APP_VERSION } from '../version';
 const WALKERS = ['chaser', 'runner', 'tank', 'shooter'];
 
 /** Red "off" slash over a toggle button. */
-function drawSlash(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number): void {
+function drawSlash(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+): void {
   ctx.save();
   ctx.strokeStyle = '#e64553';
   ctx.lineWidth = 3;
@@ -94,10 +111,18 @@ class MenuScene implements Scene {
   }
 
   render(game: Game, ctx: CanvasRenderingContext2D): void {
-    responsiveScene(ctx, game.ui, game.viewport, 1000, 780, (w, h, ui) => this.renderContent(game, ctx, w, h, ui));
+    responsiveScene(ctx, game.ui, game.viewport, 1000, 780, (w, h, ui) =>
+      this.renderContent(game, ctx, w, h, ui),
+    );
   }
 
-  private renderContent(game: Game, ctx: CanvasRenderingContext2D, w: number, h: number, ui: UiInput): void {
+  private renderContent(
+    game: Game,
+    ctx: CanvasRenderingContext2D,
+    w: number,
+    h: number,
+    ui: UiInput,
+  ): void {
     if (ui.clicked) ensureAudio();
     const t = performance.now() / 1000;
     sceneBackground(ctx, w, h, '#1c1a28', '#0a0a10');
@@ -113,7 +138,11 @@ class MenuScene implements Scene {
       ctx.moveTo(-10, h);
       for (let x = -10; x <= w + 10; x += 40) {
         const u = (x + drift) * 0.008;
-        ctx.lineTo(x, base - (Math.sin(u) * 0.6 + Math.sin(u * 2.3 + layer * 5) * 0.4) * amp);
+        ctx.lineTo(
+          x,
+          base -
+            (Math.sin(u) * 0.6 + Math.sin(u * 2.3 + layer * 5) * 0.4) * amp,
+        );
       }
       ctx.lineTo(w + 10, h);
       ctx.closePath();
@@ -134,7 +163,7 @@ class MenuScene implements Scene {
     }
     ctx.globalAlpha = 1;
 
-    // parade of enemies walking along the very bottom edge
+    // Walkers intentionally move at different speeds for a livelier parade.
     for (let i = 0; i < WALKERS.length * 2; i++) {
       const name = WALKERS[i % WALKERS.length];
       const speed = 40 + (i % 3) * 14;
@@ -145,10 +174,18 @@ class MenuScene implements Scene {
       drawSprite(ctx, name, x, y, 42, { squash });
     }
 
-    // logo: bobbing potato above the title
+    // Compact hero party above the title replaces the duplicated bottom showcase.
     const titleY = h * 0.24;
-    drawShadow(ctx, w / 2, titleY - 64, 52);
-    drawSprite(ctx, 'potato', w / 2, titleY - 92 + Math.sin(t * 2) * 5, 64, { squash: Math.sin(t * 2) * 0.04 });
+    const partyY = titleY - 92;
+    CHARACTERS.forEach((character, i) => {
+      const x = w / 2 + (i - (CHARACTERS.length - 1) / 2) * 80;
+      const bob = Math.sin(t * 2.2 + i * 0.9) * 4;
+      drawShadow(ctx, x, titleY - 60, 41);
+      drawSprite(ctx, character.sprite, x, partyY + bob, 54, {
+        squash: Math.sin(t * 2.2 + i * 0.9) * 0.035,
+        flip: i > 1,
+      });
+    });
 
     // title with layered glow
     ctx.textAlign = 'center';
@@ -182,7 +219,7 @@ class MenuScene implements Scene {
     // every translation enough horizontal room. The cursor-based layout also
     // keeps the information block attached to the actual end of the menu.
     const by = h * 0.38;
-    const menuWidth = Math.min(460, w - 72);
+    const menuWidth = Math.min(330, w - 96);
     const menuX = w / 2 - menuWidth / 2;
     const menuGap = 10;
     const primaryHeight = 58;
@@ -190,14 +227,41 @@ class MenuScene implements Scene {
     let rowY = by;
     const checkpoint = loadCheckpoint();
     if (checkpoint) {
-      if (button(ctx, ui, menuX, rowY, menuWidth, primaryHeight, tt('menu.continue', checkpoint.wave), { primary: true, fontSize: 17 })) {
+      if (
+        button(
+          ctx,
+          ui,
+          menuX,
+          rowY,
+          menuWidth,
+          primaryHeight,
+          tt('menu.continue', checkpoint.wave),
+          { primary: true, fontSize: 17 },
+        )
+      ) {
         this.goContinue = true;
       }
       rowY += primaryHeight + menuGap;
-      if (button(ctx, ui, menuX, rowY, menuWidth, itemHeight, tt('menu.newRun'), { fontSize: 14 })) this.goCharSelect = true;
+      if (
+        button(ctx, ui, menuX, rowY, menuWidth, itemHeight, tt('menu.newRun'), {
+          fontSize: 14,
+        })
+      )
+        this.goCharSelect = true;
       rowY += itemHeight + menuGap;
     } else {
-      if (button(ctx, ui, menuX, rowY, menuWidth, primaryHeight, tt('menu.play'), { primary: true, fontSize: 21 })) {
+      if (
+        button(
+          ctx,
+          ui,
+          menuX,
+          rowY,
+          menuWidth,
+          primaryHeight,
+          tt('menu.play'),
+          { primary: true, fontSize: 21 },
+        )
+      ) {
         this.goCharSelect = true;
       }
       rowY += primaryHeight + menuGap;
@@ -207,29 +271,59 @@ class MenuScene implements Scene {
       this.goCoop = true;
     }
     rowY += itemHeight + menuGap;
-    if (button(ctx, ui, menuX, rowY, menuWidth, itemHeight, tt('menu.workshopShort', shards), { icon: 'i_shard', fontSize: 14 })) {
+    if (
+      button(
+        ctx,
+        ui,
+        menuX,
+        rowY,
+        menuWidth,
+        itemHeight,
+        tt('menu.workshopShort', shards),
+        { icon: 'i_shard', fontSize: 14 },
+      )
+    ) {
       this.goMeta = true;
     }
     rowY += itemHeight + menuGap;
-    if (button(ctx, ui, menuX, rowY, menuWidth, itemHeight, tt('menu.collection'), { icon: 'i_star', fontSize: 14 })) {
+    if (
+      button(
+        ctx,
+        ui,
+        menuX,
+        rowY,
+        menuWidth,
+        itemHeight,
+        tt('menu.collection'),
+        { icon: 'i_star', fontSize: 14 },
+      )
+    ) {
       this.goCollection = true;
     }
     const menuBottom = rowY + itemHeight;
 
-    // Information block with deliberate breathing room between navigation and heroes.
+    // Information block with deliberate breathing room below navigation.
     const hintY = menuBottom + 28;
     const recordsY = hintY + 28;
     ctx.fillStyle = '#667';
     ctx.font = '14px system-ui, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(isTouchDevice() ? tt('menu.hintTouch') : tt('menu.hint'), w / 2, hintY);
+    ctx.fillText(
+      isTouchDevice() ? tt('menu.hintTouch') : tt('menu.hint'),
+      w / 2,
+      hintY,
+    );
 
     // records line
     const st = loadMeta().stats;
     if (st.runs > 0) {
       ctx.fillStyle = '#8a8aa6';
       ctx.font = 'bold 13px system-ui, sans-serif';
-      ctx.fillText(tt('menu.records', st.runs, st.wins, st.bestWave, st.bestKills), w / 2, recordsY);
+      ctx.fillText(
+        tt('menu.records', st.runs, st.wins, st.bestWave, st.bestKills),
+        w / 2,
+        recordsY,
+      );
     }
 
     // version
@@ -239,37 +333,38 @@ class MenuScene implements Scene {
     ctx.fillText(`v${APP_VERSION}`, 14, h - 16);
     ctx.textAlign = 'center';
 
-    // Heroes stay at least 64 px below the records baseline, leaving roughly
-    // 28 px of visible space before the top of their sprites.
-    const heroes = CHARACTERS;
-    const hy = Math.max(recordsY + 64, h * 0.79);
-    heroes.forEach((c, i) => {
-      const x = w * 0.5 + (i - (heroes.length - 1) / 2) * 96;
-      drawShadow(ctx, x, hy + 30, 44);
-      drawSprite(ctx, c.sprite, x, hy, 58, { squash: Math.sin(t * 3 + i * 1.4) * 0.03, flip: i > 1 });
-      ctx.fillStyle = '#9a9ab4';
-      ctx.font = '12px system-ui, sans-serif';
-      ctx.fillText(tn('c', c.id, c.name), x, hy + 50);
-    });
-
     // sound toggles + info: pixel icons, red slash when off
-    if (button(ctx, ui, w - 230, 16, 48, 40, '?', { fontSize: 19 })) this.goInfo = true;
-    if (button(ctx, ui, w - 174, 16, 48, 40, '⚙', { fontSize: 17 })) this.goSettings = true;
-    if (button(ctx, ui, w - 118, 16, 48, 40, '', { icon: 'i_sound' })) this.toggles.mute = true;
+    if (button(ctx, ui, w - 230, 16, 48, 40, '?', { fontSize: 19 }))
+      this.goInfo = true;
+    if (button(ctx, ui, w - 174, 16, 48, 40, '⚙', { fontSize: 17 }))
+      this.goSettings = true;
+    if (button(ctx, ui, w - 118, 16, 48, 40, '', { icon: 'i_sound' }))
+      this.toggles.mute = true;
     if (isMuted()) drawSlash(ctx, w - 118, 16, 48, 40);
-    if (button(ctx, ui, w - 62, 16, 48, 40, '', { icon: 'i_music' })) this.toggles.music = true;
+    if (button(ctx, ui, w - 62, 16, 48, 40, '', { icon: 'i_music' }))
+      this.toggles.music = true;
     if (!isMusicOn()) drawSlash(ctx, w - 62, 16, 48, 40);
 
     // language dropdown (drawn last so the open list sits on top)
     const lx = w - 300;
-    if (button(ctx, ui, lx, 16, 62, 40, getLang().toUpperCase(), { fontSize: 13, icon: 'i_lang' })) {
+    if (
+      button(ctx, ui, lx, 16, 62, 40, getLang().toUpperCase(), {
+        fontSize: 13,
+        icon: 'i_lang',
+      })
+    ) {
       this.langOpen = !this.langOpen;
     }
     if (this.langOpen) {
       LANGS.forEach((l, i) => {
         const y = 62 + i * 44;
         const active = l.code === getLang();
-        if (button(ctx, ui, lx - 40, y, 102, 40, l.native, { fontSize: 14, primary: active })) {
+        if (
+          button(ctx, ui, lx - 40, y, 102, 40, l.native, {
+            fontSize: 14,
+            primary: active,
+          })
+        ) {
           setLang(l.code);
           this.langOpen = false;
         }
