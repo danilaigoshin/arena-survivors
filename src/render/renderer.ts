@@ -508,12 +508,14 @@ export function renderWorld(ctx: CanvasRenderingContext2D, state: RunState, cam:
     drawHeldWeapon(ctx, p, time);
     drawSummons(ctx, p, time);
   }
-  ctx.save();
-  ctx.fillStyle = p.slot === 0 ? '#8be9fd' : '#ffd23e';
-  ctx.font = 'bold 10px system-ui, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText(`P${p.slot + 1}`, p.x, p.y - p.radius - 10);
-  ctx.restore();
+  if (state.players.length > 1) {
+    ctx.save();
+    ctx.fillStyle = p.slot === 0 ? '#8be9fd' : '#ffd23e';
+    ctx.font = 'bold 10px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(`P${p.slot + 1}`, p.x, p.y - p.radius - 10);
+    ctx.restore();
+  }
 
   // weapon visuals: chain lightning, melee swipes + orbit orbs
   for (const w of p.weapons) {
