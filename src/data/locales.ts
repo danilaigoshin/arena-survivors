@@ -381,6 +381,8 @@ const ru: Dict = {
 
 const en: Dict = {
   'menu.play': 'PLAY',
+  'menu.continue': 'CONTINUE · WAVE {0}',
+  'menu.newRun': 'NEW RUN',
   'menu.coop': 'CO-OP',
   'menu.workshop': 'WORKSHOP · {0}',
   'menu.workshopShort': 'UPGRADES · {0}',

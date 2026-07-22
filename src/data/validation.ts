@@ -77,6 +77,10 @@ export function validateGameContent(): string[] {
     }
   }
 
+  for (const key of Object.keys(DICTS.ru)) {
+    if (!DICTS.en[key]) problems.push(`en: missing ${key}`);
+  }
+
   for (const [lang, dict] of Object.entries(DICTS)) {
     for (const key of [
       'hero.arsenal', 'hero.anyClass', 'tt.explosion', 'tt.bounces', 'tt.radius', 'tt.summons', 'tt.impact', 'tt.tickDmg',
