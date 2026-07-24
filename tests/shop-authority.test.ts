@@ -13,6 +13,7 @@ import { availableShopWeapons } from '../src/systems/shop';
 import { StaticPlayerProfile } from '../src/core/playerProfile';
 import { CHARACTERS } from '../src/data/characters';
 import { WEAPONS } from '../src/data/weapons';
+import { applyBuildState, captureBuildState } from '../src/multiplayer/stateProtocol';
 
 function shop(price: number): ShopState {
   return {
@@ -60,6 +61,22 @@ describe('authoritative co-op shop', () => {
     expect(state.squad.materials).toBe(2);
     expect(state.players[0].items).toHaveLength(1);
     expect(state.players[1].items).toHaveLength(0);
+  });
+
+  it('replicates a guest purchase and the shared wallet through build state', () => {
+    const { state: host, phase } = setup(10);
+    const { state: guest } = setup(10);
+    expect(applyShopCommand(host, phase, {
+      type: 'buy',
+      phaseRevision: 7,
+      slot: 1,
+      offerIndex: 0,
+    })).toMatchObject({ accepted: true });
+
+    expect(applyBuildState(guest, captureBuildState(host, 2))).toBe(true);
+    expect(guest.squad.materials).toBe(2);
+    expect(guest.players[1].items.map((item) => item.id))
+      .toEqual([ITEMS[0].id]);
   });
 
   it('rejects stale commands without mutation', () => {

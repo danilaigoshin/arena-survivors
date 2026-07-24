@@ -268,6 +268,7 @@ function validBuildState(value: unknown): value is BuildState {
     !build
     || build.version !== 1
     || !safeSequence(build.buildRevision)
+    || !safeSequence(build.squadMaterials)
     || !Array.isArray(build.players)
     || build.players.length < 1
     || build.players.length > 2

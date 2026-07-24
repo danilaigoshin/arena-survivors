@@ -1,9 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { loadMeta } from '../src/core/save';
+import { ITEMS } from '../src/data/items';
+import { Player } from '../src/entities/player';
 import type { GameplayEventBatch } from '../src/multiplayer/events';
+import { captureFrameSnapshot, type FrameSnapshot } from '../src/multiplayer/snapshot';
+import { captureBuildState, type BuildState } from '../src/multiplayer/stateProtocol';
 import { NETWORK_VERSION } from '../src/multiplayer/types';
 import { GuestSession, HostSession } from '../src/multiplayer/session';
 import type { Transport } from '../src/multiplayer/transport';
+import { RunState } from '../src/state';
+import type { Game } from '../src/game';
 
 type ControlCallback = (peerId: string, message: unknown) => void;
 type EventCallback = (peerId: string, message: unknown) => void;
@@ -254,6 +260,50 @@ describe('network session lifecycle', () => {
       version: NETWORK_VERSION,
     });
     expect(session.returnToMenuRequested).toBe(true);
+    await session.close();
+  });
+
+  it('does not overwrite a shop purchase with the last combat snapshot', async () => {
+    vi.stubGlobal('window', {
+      setTimeout: () => 1,
+      clearTimeout: () => {},
+    });
+    const transport = new MemoryTransport();
+    const session = createGuest(transport);
+    const beforeShop = new RunState([new Player(0), new Player(1)]);
+    beforeShop.squad.materials = 10;
+    const authoritative = new RunState([new Player(0), new Player(1)]);
+    authoritative.squad.materials = 2;
+    authoritative.players[1].addItem(ITEMS[0]);
+    const guestState = new RunState([new Player(0), new Player(1)]);
+    guestState.squad.materials = 10;
+    const internals = session as unknown as {
+      sessionId: string;
+      pendingBuild: BuildState;
+      shadow: { accept(snapshot: FrameSnapshot, receivedAtMs: number): boolean };
+    };
+    internals.sessionId = 'run-1';
+    internals.pendingBuild = captureBuildState(authoritative, 2);
+    internals.shadow.accept(captureFrameSnapshot(beforeShop, {
+      snapshotSeq: 1,
+      simTick: 10,
+      ackInputTick: 0,
+      buildRevision: 1,
+      phaseRevision: 1,
+      lastEventId: 0,
+    }), performance.now());
+    const game = {
+      state: guestState,
+      localPlayer: guestState.players[1],
+      localPlayerSlot: 1,
+      sessionRole: 'guest',
+      scene: { wantsJoystick: false },
+    } as unknown as Game;
+
+    session.update(game, 1 / 60);
+
+    expect(guestState.squad.materials).toBe(2);
+    expect(guestState.players[1].items.map((item) => item.id)).toEqual([ITEMS[0].id]);
     await session.close();
   });
 });

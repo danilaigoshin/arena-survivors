@@ -1242,7 +1242,12 @@ export class GuestSession extends BaseSession {
 
     const displayed = { x: game.localPlayer.x, y: game.localPlayer.y };
     const sample = this.shadow.sample(nowMs);
-    if (sample && this.sessionId && game.sessionRole === 'guest') {
+    if (
+      sample
+      && this.sessionId
+      && game.sessionRole === 'guest'
+      && game.scene.wantsJoystick === true
+    ) {
       const applyStartedAt = performance.now();
       applyShadowSampleToRunState(game.state, sample);
       const applyMs = performance.now() - applyStartedAt;

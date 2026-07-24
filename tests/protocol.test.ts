@@ -123,6 +123,7 @@ describe('network protocol validation', () => {
       build: {
         version: 1,
         buildRevision: 2,
+        squadMaterials: 0,
         players: [null],
       },
     })).toBeNull();
@@ -132,6 +133,7 @@ describe('network protocol validation', () => {
       build: {
         version: 1,
         buildRevision: 2,
+        squadMaterials: 0,
         players: [{
           slot: 0,
           characterId: 'potato',

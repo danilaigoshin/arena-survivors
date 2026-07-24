@@ -32,6 +32,7 @@ export interface PlayerBuildState {
 export interface BuildState {
   version: 1;
   buildRevision: number;
+  squadMaterials: number;
   players: PlayerBuildState[];
   routeIds?: string[];
 }
@@ -125,6 +126,7 @@ export function captureBuildState(state: RunState, buildRevision: number): Build
   return {
     version: 1,
     buildRevision,
+    squadMaterials: state.squad.materials,
     routeIds: [...state.routeIds],
     players: state.players.map((player) => ({
       slot: player.slot,
@@ -151,6 +153,8 @@ export function applyBuildState(state: RunState, build: BuildState): boolean {
     || typeof build !== 'object'
     || build.version !== 1
     || !Number.isSafeInteger(build.buildRevision)
+    || !Number.isSafeInteger(build.squadMaterials)
+    || build.squadMaterials < 0
     || !Array.isArray(build.players)
     || build.players.length !== state.players.length
     || build.players.length > 2
@@ -244,6 +248,7 @@ export function applyBuildState(state: RunState, build: BuildState): boolean {
     player.weapons = weapons;
     player.recomputeStats();
   }
+  state.squad.materials = build.squadMaterials;
   state.routeIds = build.routeIds ? [...build.routeIds] : state.routeIds;
   state.metrics.routeIds = [...state.routeIds];
   return true;
