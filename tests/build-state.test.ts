@@ -14,7 +14,7 @@ describe('reliable build state', () => {
     const hostWeapon = new WeaponInstance(weaponById('pistol'), 0);
     host.players[0].weapons.push(hostWeapon);
     host.players[0].recomputeStats();
-    host.squad.materials = 2;
+    host.players[0].materials = 2;
 
     const guest = new RunState([new Player(0)]);
     const guestWeapon = new WeaponInstance(weaponById('pistol'), 0);
@@ -23,10 +23,10 @@ describe('reliable build state', () => {
     guest.players[0].weapons.push(guestWeapon);
     guest.players[0].recomputeStats();
     guest.players[0].hp = 23;
-    guest.squad.materials = 10;
+    guest.players[0].materials = 10;
 
     expect(applyBuildState(guest, captureBuildState(host, 2))).toBe(true);
-    expect(guest.squad.materials).toBe(2);
+    expect(guest.players[0].materials).toBe(2);
     expect(guest.players[0].hp).toBe(23);
     expect(guest.players[0].weapons[0]).toBe(guestWeapon);
     expect(guest.players[0].weapons[0].cooldownTimer).toBe(0.7);

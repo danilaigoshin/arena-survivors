@@ -85,7 +85,11 @@ export function saveCheckpoint(game: Game): boolean {
     wave: game.state.wave,
     kills: game.state.kills,
     difficultyId: game.state.difficulty.id,
-    squad: { ...game.state.squad },
+    squad: {
+      xp: game.state.squad.xp,
+      level: game.state.squad.level,
+      materials: game.localPlayer.materials,
+    },
     build: captureBuildState(game.state, 0),
     metrics: cloneRunMetrics(game.state.metrics),
     routeIds: [...game.state.routeIds],
@@ -111,6 +115,7 @@ export function restoreCheckpoint(game: Game): boolean {
   game.state.kills = checkpoint.kills;
   game.state.difficulty = difficulty;
   game.state.squad = { ...checkpoint.squad };
+  game.localPlayer.materials = checkpoint.squad.materials;
   game.state.metrics = cloneRunMetrics(checkpoint.metrics);
   game.state.routeIds = [...checkpoint.routeIds];
   game.state.activeContract = checkpoint.activeContractId

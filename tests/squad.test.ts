@@ -34,7 +34,7 @@ describe('squad model', () => {
     expect(state.pendingLevelUps).toEqual([1, 1]);
   });
 
-  it('credits pickups to the squad and triggers the collector profile', () => {
+  it('credits pickups to the collecting player and triggers the collector profile', () => {
     const state = squadState();
     state.players[0].x = 100;
     state.players[0].y = 100;
@@ -43,7 +43,8 @@ describe('squad model', () => {
     const pickup = state.pickups.alloc()!;
     pickup.init(100, 100, 3);
     updatePickups(state, 1 / 60);
-    expect(state.squad.materials).toBe(3);
+    expect(state.players[0].materials).toBe(3);
+    expect(state.players[1].materials).toBe(0);
     expect(state.squad.xp).toBe(3);
     expect(state.pickups.count).toBe(0);
   });

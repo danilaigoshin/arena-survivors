@@ -27,10 +27,10 @@ function setup(materials = 10): { state: RunState; phase: AuthoritativeShopPhase
   const players = [new Player(0), new Player(1)] as const;
   for (const player of players) {
     player.weapons.push(new WeaponInstance(weaponById('pistol'), 0));
+    player.materials = materials;
     player.recomputeStats();
   }
   const state = new RunState([...players]);
-  state.squad.materials = materials;
   return {
     state,
     phase: {
@@ -43,7 +43,7 @@ function setup(materials = 10): { state: RunState; phase: AuthoritativeShopPhase
 }
 
 describe('authoritative co-op shop', () => {
-  it('serializes competing purchases against the shared wallet', () => {
+  it('spends each player wallet independently', () => {
     const { state, phase } = setup(10);
     expect(applyShopCommand(state, phase, {
       type: 'buy',
@@ -51,19 +51,21 @@ describe('authoritative co-op shop', () => {
       slot: 0,
       offerIndex: 0,
     })).toMatchObject({ accepted: true });
-    expect(state.squad.materials).toBe(2);
+    expect(state.players[0].materials).toBe(2);
+    expect(state.players[1].materials).toBe(10);
     expect(applyShopCommand(state, phase, {
       type: 'buy',
       phaseRevision: 7,
       slot: 1,
       offerIndex: 0,
-    })).toEqual({ accepted: false, reason: 'unaffordable' });
-    expect(state.squad.materials).toBe(2);
+    })).toMatchObject({ accepted: true });
+    expect(state.players[0].materials).toBe(2);
+    expect(state.players[1].materials).toBe(2);
     expect(state.players[0].items).toHaveLength(1);
-    expect(state.players[1].items).toHaveLength(0);
+    expect(state.players[1].items).toHaveLength(1);
   });
 
-  it('replicates a guest purchase and the shared wallet through build state', () => {
+  it('keeps the guest purchase and balance after the host buys an item', () => {
     const { state: host, phase } = setup(10);
     const { state: guest } = setup(10);
     expect(applyShopCommand(host, phase, {
@@ -74,7 +76,23 @@ describe('authoritative co-op shop', () => {
     })).toMatchObject({ accepted: true });
 
     expect(applyBuildState(guest, captureBuildState(host, 2))).toBe(true);
-    expect(guest.squad.materials).toBe(2);
+    expect(guest.players[0].materials).toBe(10);
+    expect(guest.players[1].materials).toBe(2);
+    expect(guest.players[1].items.map((item) => item.id))
+      .toEqual([ITEMS[0].id]);
+
+    expect(applyShopCommand(host, phase, {
+      type: 'buy',
+      phaseRevision: 7,
+      slot: 0,
+      offerIndex: 0,
+    })).toMatchObject({ accepted: true });
+    expect(applyBuildState(guest, captureBuildState(host, 3))).toBe(true);
+
+    expect(guest.players[0].materials).toBe(2);
+    expect(guest.players[1].materials).toBe(2);
+    expect(guest.players[0].items.map((item) => item.id))
+      .toEqual([ITEMS[0].id]);
     expect(guest.players[1].items.map((item) => item.id))
       .toEqual([ITEMS[0].id]);
   });
@@ -87,7 +105,8 @@ describe('authoritative co-op shop', () => {
       slot: 0,
       offerIndex: 0,
     })).toEqual({ accepted: false, reason: 'stale' });
-    expect(state.squad.materials).toBe(10);
+    expect(state.players[0].materials).toBe(10);
+    expect(state.players[1].materials).toBe(10);
     expect(phase.shops[0].offers[0].sold).toBe(false);
   });
 
@@ -107,7 +126,7 @@ describe('authoritative co-op shop', () => {
     })).toEqual({ accepted: true, startNextWave: true });
   });
 
-  it('credits a personal weapon sale to the shared wallet', () => {
+  it('credits a personal weapon sale only to that player', () => {
     const { state, phase } = setup(0);
     state.players[1].weapons.push(new WeaponInstance(weaponById('smg'), 1));
     expect(applyShopCommand(state, phase, {
@@ -117,7 +136,8 @@ describe('authoritative co-op shop', () => {
       weaponSlot: 1,
     })).toMatchObject({ accepted: true });
     expect(state.players[1].weapons).toHaveLength(1);
-    expect(state.squad.materials).toBeGreaterThan(0);
+    expect(state.players[0].materials).toBe(0);
+    expect(state.players[1].materials).toBeGreaterThan(0);
   });
 
   it('filters shop weapons by the personal class and unlock profile', () => {

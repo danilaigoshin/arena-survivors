@@ -97,7 +97,7 @@ export function renderHud(ctx: CanvasRenderingContext2D, state: RunState, viewpo
   ctx.fillStyle = '#8be9fd';
   ctx.font = displayFont(15);
   ctx.textAlign = 'left';
-  ctx.fillText(`${state.squad.materials}`, viewW - mw + 24, 33);
+  ctx.fillText(`${p.materials}`, viewW - mw + 24, 33);
   drawIcon(ctx, 'i_skull', viewW - mw + 8, 60, 15);
   ctx.fillStyle = '#ccccdd';
   ctx.font = 'bold 15px system-ui, sans-serif';

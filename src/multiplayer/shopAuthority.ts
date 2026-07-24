@@ -1,7 +1,7 @@
 import { WeaponInstance } from '../entities/weapon';
 import type { RunState } from '../state';
 import { effectivePrice, reroll, type ShopState } from '../systems/shop';
-import { spendSquadMaterials } from '../systems/squad';
+import { spendMaterials } from '../systems/squad';
 import type { PlayerSlot } from './types';
 import { WEAPON_BRANCHES } from '../data/weaponBranches';
 import type { WeaponBranchId } from '../entities/weapon';
@@ -42,7 +42,7 @@ export function applyShopCommand(
     return { accepted: true, startNextWave: phase.ready.every(Boolean) };
   }
   if (command.type === 'reroll') {
-    const accepted = reroll(shop, state.wave, player, state.squad);
+    const accepted = reroll(shop, state.wave, player);
     if (!accepted) return { accepted: false, reason: 'unaffordable' };
     phase.ready[command.slot] = false;
     return { accepted: true, startNextWave: false };
@@ -51,7 +51,7 @@ export function applyShopCommand(
     const weaponIndex = player.weapons.findIndex((weapon) => weapon.slotIndex === command.weaponSlot);
     if (weaponIndex < 0 || player.weapons.length <= 1) return { accepted: false, reason: 'invalid' };
     const [weapon] = player.weapons.splice(weaponIndex, 1);
-    state.squad.materials += Math.max(1, Math.round(weapon.def.price * weapon.tier * 0.6));
+    player.materials += Math.max(1, Math.round(weapon.def.price * weapon.tier * 0.6));
     player.weapons.forEach((entry, index) => { entry.slotIndex = index; });
     player.recomputeStats();
     phase.ready[command.slot] = false;
@@ -103,20 +103,20 @@ export function applyShopCommand(
       && (!command.branchId || !WEAPON_BRANCHES.some((branch) => branch.id === command.branchId))
     ) return { accepted: false, reason: 'invalid' };
   }
-  if (!spendSquadMaterials(state.squad, price)) return { accepted: false, reason: 'unaffordable' };
+  if (!spendMaterials(player, price)) return { accepted: false, reason: 'unaffordable' };
   if (offer.kind === 'item') {
     player.addItem(offer.item);
   } else {
     if (duplicate) {
       if (!player.upgradeWeapon(duplicate)) {
-        state.squad.materials += price;
+        player.materials += price;
         return { accepted: false, reason: 'invalid' };
       }
       if (duplicate.tier === 3 && command.branchId && !player.chooseWeaponBranch(duplicate, command.branchId)) {
         duplicate.tier = 2;
         duplicate.branchPending = false;
         duplicate.branchPendingOrder = 0;
-        state.squad.materials += price;
+        player.materials += price;
         return { accepted: false, reason: 'invalid' };
       }
     } else {

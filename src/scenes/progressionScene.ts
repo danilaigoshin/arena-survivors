@@ -33,7 +33,9 @@ function applyRoute(game: Game, route: RouteDef): void {
   const state = game.state;
   state.routeIds[route.chapter - 1] = route.id;
   state.metrics.routeIds = [...state.routeIds];
-  if (route.reward.materials) state.squad.materials += route.reward.materials;
+  if (route.reward.materials) {
+    for (const player of state.players) player.materials += route.reward.materials;
+  }
   if (route.reward.maxHp) {
     for (const player of state.players) {
       if (player.downed) continue;

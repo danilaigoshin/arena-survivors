@@ -271,12 +271,12 @@ describe('network session lifecycle', () => {
     const transport = new MemoryTransport();
     const session = createGuest(transport);
     const beforeShop = new RunState([new Player(0), new Player(1)]);
-    beforeShop.squad.materials = 10;
+    beforeShop.players[1].materials = 10;
     const authoritative = new RunState([new Player(0), new Player(1)]);
-    authoritative.squad.materials = 2;
+    authoritative.players[1].materials = 2;
     authoritative.players[1].addItem(ITEMS[0]);
     const guestState = new RunState([new Player(0), new Player(1)]);
-    guestState.squad.materials = 10;
+    guestState.players[1].materials = 10;
     const internals = session as unknown as {
       sessionId: string;
       pendingBuild: BuildState;
@@ -302,7 +302,7 @@ describe('network session lifecycle', () => {
 
     session.update(game, 1 / 60);
 
-    expect(guestState.squad.materials).toBe(2);
+    expect(guestState.players[1].materials).toBe(2);
     expect(guestState.players[1].items.map((item) => item.id)).toEqual([ITEMS[0].id]);
     await session.close();
   });

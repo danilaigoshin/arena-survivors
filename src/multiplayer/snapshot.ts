@@ -35,6 +35,7 @@ export interface SnapshotMetadata {
 
 export interface PlayerFrame {
   slot: PlayerSlot;
+  materials: number;
   x: number;
   y: number;
   hp: number;
@@ -398,7 +399,7 @@ export function captureFrameSnapshot(
     kills: state.kills,
     squadXp: state.squad.xp,
     squadLevel: state.squad.level,
-    squadMaterials: state.squad.materials,
+    squadMaterials: state.players.reduce((total, player) => total + player.materials, 0),
     resonance: state.resonance,
     resonanceActiveT: state.resonanceActiveT,
     bossUid: state.bossUid,
@@ -411,6 +412,7 @@ export function captureFrameSnapshot(
     objective: state.objective ? { ...state.objective } : null,
     players: state.players.map((player) => ({
       slot: player.slot,
+      materials: player.materials,
       x: player.x,
       y: player.y,
       hp: player.hp,
@@ -720,6 +722,7 @@ export function encodeFrameSnapshot(snapshot: FrameSnapshot): ArrayBuffer {
   for (const player of snapshot.players) {
     writer.u8(player.slot);
     writer.u8(flags(player.downed, player.moving));
+    writer.u32(player.materials);
     writeCoord(writer, player.x);
     writeCoord(writer, player.y);
     writer.f32(player.hp);
@@ -919,6 +922,7 @@ export function decodeFrameSnapshot(buffer: ArrayBuffer): FrameSnapshot {
       slot,
       downed: (playerFlags & 1) !== 0,
       moving: (playerFlags & 2) !== 0,
+      materials: reader.u32(),
       x: readCoord(reader),
       y: readCoord(reader),
       hp: reader.f32(),
@@ -1276,6 +1280,7 @@ export function applySnapshotToRunState(state: RunState, snapshot: FrameSnapshot
   for (const frame of snapshot.players) {
     const player = state.playerBySlot(frame.slot);
     if (!player) continue;
+    player.materials = frame.materials;
     player.x = frame.x;
     player.y = frame.y;
     player.hp = frame.hp;

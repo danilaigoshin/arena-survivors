@@ -42,7 +42,7 @@ export function updatePickups(state: RunState, dt: number): void {
     if (!collector) continue;
     const collectR = collector.radius + 10;
     if (dist2(pk.x, pk.y, collector.x, collector.y) <= collectR * collectR) {
-      state.squad.materials += pk.value;
+      collector.materials += pk.value;
       state.waveMaterials += pk.value;
       state.metrics.materialsCollected += pk.value;
       gainXp(state, pk.value);

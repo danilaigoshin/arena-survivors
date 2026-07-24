@@ -168,14 +168,14 @@ class EventScene implements Scene {
         const value = Math.max(1, Math.round(
           (reward.kind === 'weapon' ? reward.weapon.price : reward.item.basePrice) * 0.8,
         ));
-        game.state.squad.materials += value;
+        player.materials += value;
         return tt('ev.resScrap', value);
       }
       if (action !== 'take') return null;
       if (reward.kind === 'weapon') {
         if (!player.canUseWeapon(reward.weapon)) {
           const value = Math.max(1, Math.round(reward.weapon.price * 0.8));
-          game.state.squad.materials += value;
+          player.materials += value;
           return tt('ev.resScrap', value);
         }
         const owned = player.weapons
@@ -326,7 +326,7 @@ class EventScene implements Scene {
       if (r.kind === 'weapon') {
         if (!p.canUseWeapon(r.weapon)) {
           const value = Math.max(1, Math.round(r.weapon.price * 0.8));
-          game.state.squad.materials += value;
+          p.materials += value;
           this.resultText = tt('ev.resScrap', value);
           playSfx('buy');
           this.resolved = true;
@@ -351,7 +351,7 @@ class EventScene implements Scene {
     } else if (a === 'scrap' && this.loot) {
       const r = this.loot;
       const v = Math.max(1, Math.round((r.kind === 'weapon' ? r.weapon.price : r.item.basePrice) * 0.8));
-      game.state.squad.materials += v;
+      p.materials += v;
       this.resultText = tt('ev.resScrap', v);
       playSfx('buy');
       this.resolved = true;

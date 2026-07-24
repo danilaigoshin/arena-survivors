@@ -21,6 +21,8 @@ export interface WeaponBuildState {
 export interface PlayerBuildState {
   slot: PlayerSlot;
   characterId: string;
+  /** Optional only so pre-v5 solo checkpoints can still be restored. */
+  materials?: number;
   stats: Stats;
   items: string[];
   upgradeMods: StatMod[];
@@ -32,7 +34,8 @@ export interface PlayerBuildState {
 export interface BuildState {
   version: 1;
   buildRevision: number;
-  squadMaterials: number;
+  /** Legacy aggregate retained for checkpoint compatibility and diagnostics. */
+  squadMaterials?: number;
   players: PlayerBuildState[];
   routeIds?: string[];
 }
@@ -126,11 +129,12 @@ export function captureBuildState(state: RunState, buildRevision: number): Build
   return {
     version: 1,
     buildRevision,
-    squadMaterials: state.squad.materials,
+    squadMaterials: state.players.reduce((total, player) => total + player.materials, 0),
     routeIds: [...state.routeIds],
     players: state.players.map((player) => ({
       slot: player.slot,
       characterId: player.character.id,
+      materials: player.materials,
       stats: { ...player.stats },
       items: player.items.map((item) => item.id),
       upgradeMods: player.upgradeMods.map((modifier) => ({ ...modifier })),
@@ -153,8 +157,8 @@ export function applyBuildState(state: RunState, build: BuildState): boolean {
     || typeof build !== 'object'
     || build.version !== 1
     || !Number.isSafeInteger(build.buildRevision)
-    || !Number.isSafeInteger(build.squadMaterials)
-    || build.squadMaterials < 0
+    || (build.squadMaterials !== undefined
+      && (!Number.isSafeInteger(build.squadMaterials) || build.squadMaterials < 0))
     || !Array.isArray(build.players)
     || build.players.length !== state.players.length
     || build.players.length > 2
@@ -175,6 +179,8 @@ export function applyBuildState(state: RunState, build: BuildState): boolean {
       || (playerBuild.slot !== 0 && playerBuild.slot !== 1)
       || seenSlots.has(playerBuild.slot)
       || typeof playerBuild.characterId !== 'string'
+      || (playerBuild.materials !== undefined
+        && (!Number.isSafeInteger(playerBuild.materials) || playerBuild.materials < 0))
       || !Array.isArray(playerBuild.items)
       || !Array.isArray(playerBuild.upgradeMods)
       || !Array.isArray(playerBuild.talents)
@@ -241,6 +247,7 @@ export function applyBuildState(state: RunState, build: BuildState): boolean {
     // Character identity is fixed by StartMessage. Assigning it directly keeps
     // current HP intact; setCharacter() would fully heal on every build ack.
     player.character = character;
+    if (playerBuild.materials !== undefined) player.materials = playerBuild.materials;
     player.items = items as typeof player.items;
     player.upgradeMods = playerBuild.upgradeMods.map((modifier) => ({ ...modifier }));
     player.talents = new Set(playerBuild.talents);
@@ -248,7 +255,7 @@ export function applyBuildState(state: RunState, build: BuildState): boolean {
     player.weapons = weapons;
     player.recomputeStats();
   }
-  state.squad.materials = build.squadMaterials;
+  state.squad.materials = state.players.reduce((total, player) => total + player.materials, 0);
   state.routeIds = build.routeIds ? [...build.routeIds] : state.routeIds;
   state.metrics.routeIds = [...state.routeIds];
   return true;

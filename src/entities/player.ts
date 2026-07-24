@@ -30,6 +30,7 @@ export class Player {
   character: CharacterDef = CHARACTERS[0];
   weapons: WeaponInstance[] = [];
   items: ItemDef[] = [];
+  materials = 0;
   upgradeMods: StatMod[] = [];
   talents = new Set<TalentId>();
   abilityAugments = new Set<AbilityAugmentId>();

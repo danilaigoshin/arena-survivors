@@ -2,7 +2,6 @@ import { ITEMS, type ItemDef } from '../data/items';
 import { WEAPONS, MAX_TIER, type WeaponDef } from '../data/weapons';
 import { chance, pick, pickWeighted, rand } from '../core/rng';
 import type { Player } from '../entities/player';
-import type { SquadState } from '../multiplayer/types';
 
 export type ShopOffer =
   | { kind: 'weapon'; weapon: WeaponDef; price: number; sold: boolean }
@@ -87,9 +86,9 @@ export function rollShop(wave: number, player: Player, prev?: ShopState): ShopSt
   };
 }
 
-export function reroll(shop: ShopState, wave: number, player: Player, squad: SquadState): boolean {
-  if (squad.materials < shop.rerollCost) return false;
-  squad.materials -= shop.rerollCost;
+export function reroll(shop: ShopState, wave: number, player: Player): boolean {
+  if (player.materials < shop.rerollCost) return false;
+  player.materials -= shop.rerollCost;
   shop.rerollCount++;
   const next = rollShop(wave, player);
   shop.offers = next.offers;

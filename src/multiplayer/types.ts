@@ -1,4 +1,4 @@
-export const NETWORK_VERSION = 4;
+export const NETWORK_VERSION = 5;
 export const MAX_PLAYERS = 2;
 
 export type PlayerSlot = 0 | 1;
@@ -7,6 +7,7 @@ export type SessionRole = 'solo' | 'host' | 'guest';
 export interface SquadState {
   xp: number;
   level: number;
+  /** @deprecated Currency is owned by each Player; this is a legacy aggregate for checkpoints/snapshots. */
   materials: number;
 }
 

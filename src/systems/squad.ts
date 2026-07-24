@@ -1,4 +1,4 @@
-import type { PlayerSlot, SquadState } from '../multiplayer/types';
+import type { PlayerSlot } from '../multiplayer/types';
 import type { Player } from '../entities/player';
 
 export function xpToNext(level: number): number {
@@ -6,9 +6,9 @@ export function xpToNext(level: number): number {
   return Math.round(8 + (safeLevel - 1) * 5 + Math.pow(safeLevel - 1, 2) * 1.2);
 }
 
-export function spendSquadMaterials(squad: SquadState, amount: number): boolean {
-  if (!Number.isSafeInteger(amount) || amount < 0 || squad.materials < amount) return false;
-  squad.materials -= amount;
+export function spendMaterials(player: Player, amount: number): boolean {
+  if (!Number.isSafeInteger(amount) || amount < 0 || player.materials < amount) return false;
+  player.materials -= amount;
   return true;
 }
 

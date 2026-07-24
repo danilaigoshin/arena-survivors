@@ -284,6 +284,7 @@ function validBuildState(value: unknown): value is BuildState {
       || slots.has(player.slot)
       || typeof player.characterId !== 'string'
       || !characterIds.has(player.characterId)
+      || !safeSequence(player.materials)
       || !record(player.stats)
       || Object.keys(player.stats as Record<string, unknown>).length !== statKeys.size
       || Object.keys(player.stats as Record<string, unknown>).some((key) => !statKeys.has(key))

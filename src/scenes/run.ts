@@ -309,7 +309,7 @@ class RunScene implements Scene {
 
     // dev cheats
     if (import.meta.env.DEV) {
-      if (isDown('F9')) s.squad.materials += 5;
+      if (isDown('F9')) game.localPlayer.materials += 5;
       if (isDown('F10')) s.waveTimer = Math.min(s.waveTimer, 0.1);
     }
 
@@ -891,13 +891,13 @@ class RunScene implements Scene {
     const r = this.chestReward!;
     if (action === 'scrap') {
       const value = Math.max(1, Math.round((r.kind === 'weapon' ? r.weapon.price : r.item.basePrice) * 0.8));
-      game.state.squad.materials += value;
+      p.materials += value;
       playSfx('buy');
       return;
     }
     if (r.kind === 'weapon') {
       if (!p.canUseWeapon(r.weapon)) {
-        game.state.squad.materials += Math.max(1, Math.round(r.weapon.price * 0.8));
+        p.materials += Math.max(1, Math.round(r.weapon.price * 0.8));
         playSfx('buy');
         return;
       }
@@ -910,7 +910,7 @@ class RunScene implements Scene {
         p.weapons.push(new WeaponInstance(r.weapon, p.weapons.length));
       } else {
         // shouldn't happen (button disabled), fall back to scrap
-        game.state.squad.materials += Math.max(1, Math.round(r.weapon.price * 0.8));
+        p.materials += Math.max(1, Math.round(r.weapon.price * 0.8));
       }
       p.recomputeStats();
       game.state.metrics.maxWeapons[p.slot] = Math.max(game.state.metrics.maxWeapons[p.slot], p.weapons.length);

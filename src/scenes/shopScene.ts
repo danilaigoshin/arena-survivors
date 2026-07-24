@@ -317,7 +317,7 @@ class ShopScene implements Scene {
     }
     const p = game.localPlayer;
     const price = this.price(offer, p);
-    if (offer.sold || game.state.squad.materials < price) return;
+    if (offer.sold || p.materials < price) return;
     if (offer.kind === 'weapon') {
       if (!p.canUseWeapon(offer.weapon)) return;
       const target = mergeTarget(offer, p);
@@ -344,7 +344,7 @@ class ShopScene implements Scene {
     } else {
       p.addItem(offer.item);
     }
-    game.state.squad.materials -= price;
+    p.materials -= price;
     offer.sold = true;
     game.state.metrics.maxWeapons[p.slot] = Math.max(game.state.metrics.maxWeapons[p.slot], p.weapons.length);
     playSfx('buy');
@@ -369,7 +369,7 @@ class ShopScene implements Scene {
     p.weapons.splice(index, 1);
     p.weapons.forEach((wi, i) => (wi.slotIndex = i));
     p.recomputeStats(); // set bonuses may have changed
-    game.state.squad.materials += Math.max(1, Math.round(w.def.price * w.tier * 0.6));
+    p.materials += Math.max(1, Math.round(w.def.price * w.tier * 0.6));
     playSfx('buy');
   }
 
@@ -529,7 +529,7 @@ class ShopScene implements Scene {
             playSfx('click');
             return;
           }
-          if (reroll(this.shop, game.state.wave, game.localPlayer, game.state.squad)) playSfx('reroll');
+          if (reroll(this.shop, game.state.wave, game.localPlayer)) playSfx('reroll');
         };
       }
     }
@@ -646,7 +646,7 @@ class ShopScene implements Scene {
     ctx.fillStyle = '#8be9fd';
     ctx.font = displayFont(15);
     ctx.textAlign = 'left';
-    ctx.fillText(`${game.state.squad.materials}`, rowRight - 90, top + 73);
+    ctx.fillText(`${game.localPlayer.materials}`, rowRight - 90, top + 73);
 
     // offer cards
     const sinceEnter = (performance.now() - this.enterAt) / 1000;
@@ -806,7 +806,7 @@ class ShopScene implements Scene {
       ctx.globalAlpha = ek;
 
       const price = this.price(offer, p);
-      const affordable = !offer.sold && game.state.squad.materials >= price && (offer.kind !== 'weapon' || target > 1 || p.canAddWeapon());
+      const affordable = !offer.sold && p.materials >= price && (offer.kind !== 'weapon' || target > 1 || p.canAddWeapon());
       if (offer.sold) {
         // rotated SOLD stamp, popping in on purchase
         const age = (performance.now() - this.soldAt[i]) / 1000;
@@ -917,7 +917,7 @@ class ShopScene implements Scene {
     const btnLeft = Math.max(ccx - 220, 20 + 240 + 24); // clear of the next-wave chip
     if (
       button(ctx, ui, btnLeft, by, 200, 56, tt('shop.reroll', this.shop.rerollCost), {
-        enabled: game.state.squad.materials >= this.shop.rerollCost,
+        enabled: game.localPlayer.materials >= this.shop.rerollCost,
         icon: 'i_gem',
       })
     ) {
@@ -933,7 +933,7 @@ class ShopScene implements Scene {
           playSfx('click');
           return;
         }
-        if (reroll(this.shop, game.state.wave, game.localPlayer, game.state.squad)) playSfx('reroll');
+        if (reroll(this.shop, game.state.wave, game.localPlayer)) playSfx('reroll');
       };
     }
     // pulsing golden halo behind FIGHT

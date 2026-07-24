@@ -19,6 +19,8 @@ function makeState(): RunState {
   const state = new RunState([new Player(0), new Player(1)]);
   state.players[0].x = 100;
   state.players[1].x = 200;
+  state.players[0].materials = 7;
+  state.players[1].materials = 11;
   const weapon = new WeaponInstance(weaponById('pistol'), 0);
   weapon.cooldownTimer = Math.fround(0.4);
   weapon.recoil = Math.fround(0.7);
@@ -78,11 +80,14 @@ describe('binary frame snapshots', () => {
     expect(decoded.waveTimer).toBe(999);
     expect(decoded.players[0]).toMatchObject({
       slot: frame.players[0].slot,
+      materials: 7,
       x: frame.players[0].x,
       y: frame.players[0].y,
       hp: frame.players[0].hp,
       maxHp: frame.players[0].maxHp,
     });
+    expect(decoded.players[1].materials).toBe(11);
+    expect(decoded.squadMaterials).toBe(18);
     expect(decoded.players[0].weapons[0].cooldownTimer)
       .toBeCloseTo(frame.players[0].weapons[0].cooldownTimer, 2);
     expect(decoded.players[0].weapons[0].recoil)

@@ -137,6 +137,7 @@ describe('network protocol validation', () => {
         players: [{
           slot: 0,
           characterId: 'potato',
+          materials: 0,
           stats: { maxHp: 100 },
           items: [],
           upgradeMods: [],
