@@ -302,20 +302,26 @@ class ShopScene implements Scene {
     return [cx - total / 2 + i * (CARD_W + GAP), this.top(h) + HEADER_H, CARD_W, CARD_H];
   }
 
-  private tryBuy(game: Game, offer: ShopOffer, branchId?: WeaponBranchId): void {
-    const offerIndex = this.shop.offers.indexOf(offer);
-    if (
-      offerIndex >= 0
-      && game.sessionRole !== 'solo'
-      && this.submitNetworkCommand(game, {
-        type: 'buy',
-        phaseRevision: this.networkPhase?.phaseRevision ?? this.networkPhaseRevision,
-        slot: game.localPlayerSlot,
-        offerIndex,
-        branchId,
-      })
-    ) {
-      playSfx('click');
+  private tryBuy(game: Game, offerIndex: number, branchId?: WeaponBranchId): void {
+    // Resolve the offer at execution time, not at click time: on the guest,
+    // syncGuestPhase rehydrates this.shop with fresh offer objects every tick,
+    // so an offer captured during render is stale by the next frame.
+    const offer = this.shop.offers[offerIndex];
+    if (!offer) return;
+    if (game.sessionRole !== 'solo') {
+      // The host is authoritative; a local mutation here would be reverted by
+      // the next build-state, so in co-op only ever submit the command.
+      if (
+        this.submitNetworkCommand(game, {
+          type: 'buy',
+          phaseRevision: this.networkPhase?.phaseRevision ?? this.networkPhaseRevision,
+          slot: game.localPlayerSlot,
+          offerIndex,
+          branchId,
+        })
+      ) {
+        playSfx('click');
+      }
       return;
     }
     const p = game.localPlayer;
@@ -517,7 +523,7 @@ class ShopScene implements Scene {
         if (!consumeKeyPress(`Digit${i + 1}`) && !consumeKeyPress(`Numpad${i + 1}`)) continue;
         const offer = this.shop.offers[i];
         if (offer.kind === 'weapon' && mergeTarget(offer, game.localPlayer) === 3) continue;
-        this.pending = () => this.tryBuy(game, offer);
+        this.pending = () => this.tryBuy(game, i);
       }
       if (consumeKeyPress('KeyR')) {
         this.pending = () => {
@@ -843,7 +849,7 @@ class ShopScene implements Scene {
               labelColor: affordable ? (branch.id === 'force' ? '#ffd23e' : '#8be9fd') : '#e05a5a',
             })
           ) {
-            this.pending = () => this.tryBuy(game, offer, branch.id);
+            this.pending = () => this.tryBuy(game, i, branch.id);
           }
         });
       } else if (
@@ -853,7 +859,7 @@ class ShopScene implements Scene {
           labelColor: affordable ? '#ffd23e' : '#e05a5a',
         })
       ) {
-        this.pending = () => this.tryBuy(game, offer);
+        this.pending = () => this.tryBuy(game, i);
       }
       ctx.restore();
     }
