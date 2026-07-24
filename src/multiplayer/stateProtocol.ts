@@ -43,6 +43,10 @@ export interface BuildState {
 interface PhaseBase {
   version: 1;
   phaseRevision: number;
+  /** Monotonic ordering for updates within the same phase. */
+  stateRevision: number;
+  /** Build state that must be applied before this phase becomes visible. */
+  buildRevision: number;
 }
 
 export interface RunPhase extends PhaseBase {

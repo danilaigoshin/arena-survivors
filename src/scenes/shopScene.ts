@@ -169,6 +169,9 @@ class ShopScene implements Scene {
   }
 
   private startNextNetworkWave(game: Game, session: HostSession): void {
+    // Publish one final authoritative build and let the following phase carry
+    // its revision. The guest will not enter combat until this build arrives.
+    session.publishBuild(game);
     this.networkPhase = null;
     continueToNextWave(game);
   }

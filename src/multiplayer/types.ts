@@ -1,4 +1,4 @@
-export const NETWORK_VERSION = 5;
+export const NETWORK_VERSION = 6;
 export const MAX_PLAYERS = 2;
 
 export type PlayerSlot = 0 | 1;

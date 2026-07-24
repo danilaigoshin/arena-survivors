@@ -138,6 +138,8 @@ describe('co-op profile and route validation', () => {
         version: 1,
         phase: 'progression',
         phaseRevision: 7,
+        stateRevision: 1,
+        buildRevision: 1,
         kind: 'route',
         choiceIds: [[id], []],
         submitted: [false, true],

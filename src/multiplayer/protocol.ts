@@ -333,9 +333,16 @@ function parsePhaseState(value: unknown): PhaseState | null {
     !state
     || state.version !== 1
     || !safeSequence(state.phaseRevision)
+    || !safeSequence(state.stateRevision)
+    || !safeSequence(state.buildRevision)
     || typeof state.phase !== 'string'
   ) return null;
-  const base = { version: 1 as const, phaseRevision: state.phaseRevision };
+  const base = {
+    version: 1 as const,
+    phaseRevision: state.phaseRevision,
+    stateRevision: state.stateRevision,
+    buildRevision: state.buildRevision,
+  };
   switch (state.phase) {
     case 'run':
       return safeSequence(state.wave) && state.wave >= 1

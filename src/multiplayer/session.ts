@@ -91,6 +91,11 @@ export interface LobbyMember {
   ready: boolean;
 }
 
+type WithoutCausalRevisions<T> = T extends PhaseState
+  ? Omit<T, 'stateRevision' | 'buildRevision'>
+  : never;
+type PublishablePhaseState = WithoutCausalRevisions<PhaseState>;
+
 export interface NetworkSession {
   readonly role: Exclude<SessionRole, 'solo'>;
   status: SessionStatus;
@@ -279,6 +284,7 @@ export class HostSession extends BaseSession {
   private running = false;
   private buildRevision = 1;
   private phaseRevision = 0;
+  private phaseStateRevision = 0;
   private readonly pendingPhaseCommands: PhaseCommandMessage[] = [];
   pausedByVisibility = false;
   private readonly eventJournal = new GameplayEventJournal();
@@ -568,15 +574,29 @@ export class HostSession extends BaseSession {
     }));
   }
 
-  publishPhase(state: PhaseState): void {
-    this.currentPhaseState = state;
-    this.phaseRevision = state.phaseRevision;
-    this.metrics.phaseRevision = state.phaseRevision;
+  publishPhase(state: PublishablePhaseState): void {
+    const phaseChanged = !this.currentPhaseState
+      || this.currentPhaseState.phase !== state.phase
+      || this.currentPhaseState.phaseRevision !== state.phaseRevision;
+    if (phaseChanged) {
+      // A snapshot from the previous interactive phase must never become the
+      // first authoritative frame after a menu/choice transition.
+      this.previousSnapshot = null;
+      this.forceKeyframe = true;
+    }
+    const published = {
+      ...state,
+      stateRevision: ++this.phaseStateRevision,
+      buildRevision: this.buildRevision,
+    } as PhaseState;
+    this.currentPhaseState = published;
+    this.phaseRevision = published.phaseRevision;
+    this.metrics.phaseRevision = published.phaseRevision;
     if (!this.acceptedPeerId) return;
     this.ignoreTransportFailure(this.transport.sendControl(this.acceptedPeerId, {
       type: 'phase-state',
       version: NETWORK_VERSION,
-      state,
+      state: published,
     }));
   }
 
@@ -768,6 +788,9 @@ export class GuestSession extends BaseSession {
   private snapshotWindowCount = 0;
   private pendingBuild: BuildState | null = null;
   private lastAppliedBuildRevision = 0;
+  private pendingPhaseState: PhaseState | null = null;
+  private lastReceivedPhaseStateRevision = 0;
+  private snapshotPhaseFloor = 0;
   private pendingStart: StartMessage | null = null;
   private inputSeq = 0;
   private clientTick = 0;
@@ -846,6 +869,7 @@ export class GuestSession extends BaseSession {
       try {
         const packet = decodeFrameSnapshot(data);
         const receivedAt = performance.now();
+        if (packet.phaseRevision <= this.snapshotPhaseFloor) return;
         if (
           this.wireSnapshot
           && packet.snapshotSeq <= this.wireSnapshot.snapshotSeq
@@ -902,6 +926,28 @@ export class GuestSession extends BaseSession {
     }));
   }
 
+  private activatePhaseState(state: PhaseState): void {
+    this.pendingPhaseState = null;
+    this.phaseState = state;
+    this.metrics.phaseRevision = state.phaseRevision;
+    this.changed();
+  }
+
+  private activatePendingPhaseState(): void {
+    const state = this.pendingPhaseState;
+    if (!state || state.buildRevision > this.lastAppliedBuildRevision) return;
+    this.activatePhaseState(state);
+  }
+
+  private suspendCombatSnapshots(phaseRevision: number): void {
+    if (phaseRevision <= this.snapshotPhaseFloor) return;
+    this.snapshotPhaseFloor = phaseRevision;
+    this.shadow.clear();
+    this.pendingSnapshots.length = 0;
+    this.wireSnapshot = null;
+    this.lastSnapshotReceivedAt = 0;
+  }
+
   private onControl(peerId: string, message: ControlMessage): void {
     if (message.type === 'room-full') {
       this.setStatus('room-full');
@@ -933,6 +979,8 @@ export class GuestSession extends BaseSession {
     } else if (message.type === 'start') {
       this.sessionId = message.sessionId;
       this.pendingStart = message;
+      this.phaseState = null;
+      this.pendingPhaseState = null;
       this.changed();
     } else if (message.type === 'build-state') {
       const newestBuildRevision = Math.max(
@@ -943,10 +991,16 @@ export class GuestSession extends BaseSession {
         this.pendingBuild = message.build;
       }
     } else if (message.type === 'phase-state') {
-      if (message.state.phaseRevision < this.metrics.phaseRevision) return;
-      this.phaseState = message.state;
-      this.metrics.phaseRevision = message.state.phaseRevision;
-      this.changed();
+      if (message.state.stateRevision <= this.lastReceivedPhaseStateRevision) return;
+      this.lastReceivedPhaseStateRevision = message.state.stateRevision;
+      if (message.state.phase !== 'run') {
+        this.suspendCombatSnapshots(message.state.phaseRevision);
+      }
+      if (message.state.buildRevision > this.lastAppliedBuildRevision) {
+        this.pendingPhaseState = message.state;
+      } else {
+        this.activatePhaseState(message.state);
+      }
     } else if (message.type === 'end-result') {
       if (message.result.sessionId !== this.sessionId) return;
       this.applyEndResult(message.result);
@@ -1239,6 +1293,7 @@ export class GuestSession extends BaseSession {
         this.pendingBuild = null;
       }
     }
+    this.activatePendingPhaseState();
 
     const displayed = { x: game.localPlayer.x, y: game.localPlayer.y };
     const sample = this.shadow.sample(nowMs);

@@ -4,7 +4,7 @@ import { ITEMS } from '../src/data/items';
 import { Player } from '../src/entities/player';
 import type { GameplayEventBatch } from '../src/multiplayer/events';
 import { captureFrameSnapshot, type FrameSnapshot } from '../src/multiplayer/snapshot';
-import { captureBuildState, type BuildState } from '../src/multiplayer/stateProtocol';
+import { captureBuildState } from '../src/multiplayer/stateProtocol';
 import { NETWORK_VERSION } from '../src/multiplayer/types';
 import { GuestSession, HostSession } from '../src/multiplayer/session';
 import type { Transport } from '../src/multiplayer/transport';
@@ -263,7 +263,7 @@ describe('network session lifecycle', () => {
     await session.close();
   });
 
-  it('does not overwrite a shop purchase with the last combat snapshot', async () => {
+  it('keeps the latest shop build through a host purchase and the next wave', async () => {
     vi.stubGlobal('window', {
       setTimeout: () => 1,
       clearTimeout: () => {},
@@ -272,18 +272,24 @@ describe('network session lifecycle', () => {
     const session = createGuest(transport);
     const beforeShop = new RunState([new Player(0), new Player(1)]);
     beforeShop.players[1].materials = 10;
-    const authoritative = new RunState([new Player(0), new Player(1)]);
-    authoritative.players[1].materials = 2;
-    authoritative.players[1].addItem(ITEMS[0]);
+    const afterGuestPurchase = new RunState([new Player(0), new Player(1)]);
+    afterGuestPurchase.players[0].materials = 10;
+    afterGuestPurchase.players[1].materials = 2;
+    afterGuestPurchase.players[1].addItem(ITEMS[0]);
+    const afterHostPurchase = new RunState([new Player(0), new Player(1)]);
+    afterHostPurchase.players[0].materials = 2;
+    afterHostPurchase.players[1].materials = 2;
+    afterHostPurchase.players[0].addItem(ITEMS[0]);
+    afterHostPurchase.players[1].addItem(ITEMS[0]);
     const guestState = new RunState([new Player(0), new Player(1)]);
     guestState.players[1].materials = 10;
     const internals = session as unknown as {
+      acceptedPeerId: string;
       sessionId: string;
-      pendingBuild: BuildState;
       shadow: { accept(snapshot: FrameSnapshot, receivedAtMs: number): boolean };
     };
+    internals.acceptedPeerId = 'host';
     internals.sessionId = 'run-1';
-    internals.pendingBuild = captureBuildState(authoritative, 2);
     internals.shadow.accept(captureFrameSnapshot(beforeShop, {
       snapshotSeq: 1,
       simTick: 10,
@@ -292,6 +298,36 @@ describe('network session lifecycle', () => {
       phaseRevision: 1,
       lastEventId: 0,
     }), performance.now());
+    const offers = Array.from({ length: 4 }, (_, index) => ({
+      kind: 'item' as const,
+      definitionId: ITEMS[0].id,
+      price: 8,
+      sold: index === 0,
+    }));
+    const shopPhase = {
+      type: 'phase-state',
+      version: NETWORK_VERSION,
+      state: {
+        version: 1,
+        phase: 'shop',
+        phaseRevision: 2,
+        stateRevision: 1,
+        buildRevision: 2,
+        shops: [
+          { offers: offers.map((offer) => ({ ...offer, sold: false })), rerollCost: 3, rerollCount: 0 },
+          { offers, rerollCost: 3, rerollCount: 0 },
+        ],
+        ready: [false, false],
+        discount: 1,
+      },
+    };
+    transport.control('host', shopPhase);
+    expect(session.phaseState).toBeNull();
+    transport.control('host', {
+      type: 'build-state',
+      version: NETWORK_VERSION,
+      build: captureBuildState(afterGuestPurchase, 2),
+    });
     const game = {
       state: guestState,
       localPlayer: guestState.players[1],
@@ -302,6 +338,38 @@ describe('network session lifecycle', () => {
 
     session.update(game, 1 / 60);
 
+    expect(guestState.players[1].materials).toBe(2);
+    expect(guestState.players[1].items.map((item) => item.id)).toEqual([ITEMS[0].id]);
+    expect(session.phaseState?.phase).toBe('shop');
+
+    transport.control('host', {
+      type: 'phase-state',
+      version: NETWORK_VERSION,
+      state: {
+        version: 1,
+        phase: 'run',
+        phaseRevision: 3,
+        stateRevision: 2,
+        buildRevision: 3,
+        wave: 2,
+      },
+    });
+    expect(session.phaseState?.phase).toBe('shop');
+    // A delayed update from the same shop phase must not replace the newer
+    // run transition that is waiting for its final build.
+    transport.control('host', shopPhase);
+    transport.control('host', {
+      type: 'build-state',
+      version: NETWORK_VERSION,
+      build: captureBuildState(afterHostPurchase, 3),
+    });
+    session.update(game, 1 / 60);
+    expect(session.phaseState?.phase).toBe('run');
+    expect(guestState.players[0].items.map((item) => item.id)).toEqual([ITEMS[0].id]);
+    expect(guestState.players[1].items.map((item) => item.id)).toEqual([ITEMS[0].id]);
+
+    game.scene = { wantsJoystick: true };
+    session.update(game, 1 / 60);
     expect(guestState.players[1].materials).toBe(2);
     expect(guestState.players[1].items.map((item) => item.id)).toEqual([ITEMS[0].id]);
     await session.close();

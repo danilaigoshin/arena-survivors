@@ -87,6 +87,8 @@ describe('network protocol validation', () => {
       state: {
         version: 1,
         phaseRevision: 3,
+        stateRevision: 1,
+        buildRevision: 1,
         phase: 'level-up',
         choices: [['not-a-choice'], []],
         submitted: [false, true],
@@ -98,6 +100,8 @@ describe('network protocol validation', () => {
       state: {
         version: 1,
         phaseRevision: 4,
+        stateRevision: 2,
+        buildRevision: 1,
         phase: 'shop',
         shops: [null, null],
         ready: [false, false],
@@ -110,6 +114,8 @@ describe('network protocol validation', () => {
       state: {
         version: 1,
         phaseRevision: 5,
+        stateRevision: 3,
+        buildRevision: 1,
         phase: 'paused',
         reason: 'hidden',
       },
