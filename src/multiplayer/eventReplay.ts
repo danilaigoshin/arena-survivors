@@ -12,8 +12,15 @@ import {
 } from '../render/fx';
 import { playSfx, type SfxEvent } from '../render/audio';
 import type { GameplayEvent } from './events';
+import { playAbilityPresentation } from '../render/abilityPresentation';
+import { withoutPresentationCapture } from './presentationBus';
 
 export function replayGameplayEvent(game: Game, event: GameplayEvent): void {
+  if (event.type === 'ability') {
+    const player = game.state.playerBySlot(event.playerSlot);
+    if (player) withoutPresentationCapture(() => playAbilityPresentation(player));
+    return;
+  }
   if (event.type === 'damage') {
     spawnDamageNumber(event.x, event.y, event.damage, event.crit, event.heal ?? false);
     if (!event.heal && event.target === 'player' && event.targetSlot === game.localPlayerSlot) {

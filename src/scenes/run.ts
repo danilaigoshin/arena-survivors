@@ -48,6 +48,8 @@ import { GuestSession, HostSession } from '../multiplayer/session';
 import { resetPlayersForWave } from '../systems/squad';
 import { updateBomberExplosions, updateFirePatches } from '../systems/hazards';
 import { claimDisconnectedRun, disconnectedRunReward } from '../core/disconnectRecovery';
+import { emitPresentationEvent, withoutPresentationCapture } from '../multiplayer/presentationBus';
+import { playAbilityPresentation } from '../render/abilityPresentation';
 
 function drawPauseSlash(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number): void {
   ctx.save();
@@ -332,7 +334,7 @@ class RunScene implements Scene {
         && input.abilityPressSeq > this.lastAbilityPressSeq[player.slot]
         && player.abilityCd <= 0
       ) {
-        this.useAbility(game, player);
+        this.useAbility(game, player, input.abilityPressSeq);
       }
       this.lastAbilityPressSeq[player.slot] = Math.max(this.lastAbilityPressSeq[player.slot], input.abilityPressSeq);
       player.updateAbilityTimers(dt);
@@ -778,11 +780,17 @@ class RunScene implements Scene {
   }
 
   /** Activates the character's bound active ability. */
-  private useAbility(game: Game, p: Player): void {
+  private useAbility(game: Game, p: Player, abilityPressSeq: number): void {
     const ab = p.character.ability;
     game.state.metrics.abilityUses[p.slot]++;
     p.abilityCd = p.abilityCooldown();
     p.activateAbility();
+    emitPresentationEvent({
+      type: 'ability',
+      playerSlot: p.slot,
+      abilityId: ab.id,
+      abilityPressSeq,
+    });
     if (game.state.players.length === 2) {
       const teammate = game.state.players.find((player) => player.slot !== p.slot);
       if (teammate && !teammate.downed) {
@@ -809,22 +817,7 @@ class RunScene implements Scene {
         for (let i = 0; i < weapon.summonCount; i++) weapon.summonHitCd[i] *= 0.7;
       }
     }
-    if (ab.id === 'adaptation') {
-      spawnBurst(p.x, p.y, '#8dff9a', 12);
-      spawnRing(p.x, p.y, '#8dff9a');
-      playSfx('levelup');
-    } else if (ab.id === 'whirlwind') {
-      spawnBurst(p.x, p.y, '#ffd23e', 10);
-      playSfx('heavy');
-    } else if (ab.id === 'overheat') {
-      spawnBurst(p.x, p.y, '#ff9a45', 12);
-      spawnRing(p.x, p.y, '#ff9a45');
-      playSfx('fire');
-    } else if (ab.id === 'arcane_circle') {
-      spawnBurst(p.x, p.y, '#b18cff', 14);
-      spawnRing(p.x, p.y, '#b18cff');
-      playSfx('magic');
-    }
+    withoutPresentationCapture(() => playAbilityPresentation(p));
   }
 
   private updateAbilityEffects(game: Game, dt: number): void {
@@ -1002,16 +995,24 @@ class RunScene implements Scene {
       const metrics = game.networkSession?.metrics;
       if (import.meta.env.DEV && metrics) {
         ctx.fillText(
-          `rtt ${metrics.rtt.toFixed(0)}ms · snap ${metrics.snapshotBytes}b/${metrics.snapshotSendMs.toFixed(1)}ms`
-          + ` · pending ${metrics.snapshotPending ? 1 : 0} · interp ${metrics.interpolationAge.toFixed(0)}ms`,
+          `app/ice ${metrics.rtt.toFixed(0)}/${metrics.iceRtt.toFixed(0)}ms`
+          + ` · ${metrics.candidateRoute || '-'} · rt ${metrics.realtimeReady ? 1 : 0}`,
           w - 10,
           h - 34,
         );
         ctx.fillText(
-          `corr ${metrics.predictionCorrection.toFixed(1)} · input ${metrics.lastInputSeq}`
-          + ` · event ${metrics.lastEventId} · build ${metrics.buildRevision} · phase ${metrics.phaseRevision}`,
+          `snap ${metrics.snapshotBytes}b ${metrics.snapshotRate.toFixed(1)}hz`
+          + ` ${(metrics.snapshotBytesPerSecond / 1024).toFixed(0)}kb/s`
+          + ` · jitter/interp ${metrics.snapshotJitter.toFixed(0)}/${metrics.interpolationAge.toFixed(0)}ms`,
           w - 10,
           h - 50,
+        );
+        ctx.fillText(
+          `decode/apply ${metrics.snapshotDecodeMs.toFixed(1)}/${metrics.snapshotApplyMs.toFixed(1)}ms`
+          + ` · buf ${metrics.bufferedAmount} · drop ${metrics.droppedSnapshots}/${metrics.droppedEvents}`
+          + ` · corr ${metrics.predictionCorrection.toFixed(1)} · tick ${metrics.lastInputTick}`,
+          w - 10,
+          h - 66,
         );
       }
     }

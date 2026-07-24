@@ -1,4 +1,4 @@
-export const NETWORK_VERSION = 2;
+export const NETWORK_VERSION = 3;
 export const MAX_PLAYERS = 2;
 
 export type PlayerSlot = 0 | 1;
@@ -30,6 +30,10 @@ export interface PlayerInputState {
 
 export interface NetworkInput extends PlayerInputState {
   seq: number;
+  /** Guest simulation tick represented by this command. */
+  clientTick: number;
+  /** Latest authoritative snapshot assembled by the guest. */
+  snapshotSeq: number;
 }
 
 export const NEUTRAL_INPUT: Readonly<PlayerInputState> = Object.freeze({

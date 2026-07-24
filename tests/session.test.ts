@@ -8,6 +8,7 @@ import type { Transport } from '../src/multiplayer/transport';
 type ControlCallback = (peerId: string, message: unknown) => void;
 type EventCallback = (peerId: string, message: unknown) => void;
 type SnapshotCallback = (peerId: string, data: ArrayBuffer) => void;
+type InputCallback = (peerId: string, data: ArrayBuffer) => void;
 type PeerCallback = (peerId: string, state: 'joined' | 'left') => void;
 
 class MemoryTransport implements Transport {
@@ -15,6 +16,7 @@ class MemoryTransport implements Transport {
   private readonly controlCallbacks = new Set<ControlCallback>();
   private readonly eventCallbacks = new Set<EventCallback>();
   private readonly snapshotCallbacks = new Set<SnapshotCallback>();
+  private readonly inputCallbacks = new Set<InputCallback>();
   private readonly peerCallbacks = new Set<PeerCallback>();
 
   async sendControl(peerId: string, message: unknown): Promise<void> {
@@ -23,7 +25,11 @@ class MemoryTransport implements Transport {
 
   async sendEvents(_peerId: string, _batch: GameplayEventBatch): Promise<void> {}
 
-  async sendSnapshot(_peerId: string, _snapshot: ArrayBuffer): Promise<void> {}
+  async sendSnapshot(_peerId: string, _snapshot: ArrayBuffer) {
+    return { sent: true, realtime: true, bufferedAmount: 0 };
+  }
+
+  async sendInput(_peerId: string, _packet: ArrayBuffer): Promise<void> {}
 
   onControl(callback: ControlCallback): () => void {
     this.controlCallbacks.add(callback);
@@ -40,15 +46,34 @@ class MemoryTransport implements Transport {
     return () => this.snapshotCallbacks.delete(callback);
   }
 
+  onInput(callback: InputCallback): () => void {
+    this.inputCallbacks.add(callback);
+    return () => this.inputCallbacks.delete(callback);
+  }
+
   onPeerState(callback: PeerCallback): () => void {
     this.peerCallbacks.add(callback);
     return () => this.peerCallbacks.delete(callback);
+  }
+
+  async getDiagnostics() {
+    return {
+      iceRttMs: 0,
+      availableOutgoingBitrate: 0,
+      bufferedAmount: 0,
+      localCandidateType: '',
+      remoteCandidateType: '',
+      realtimeReady: true,
+      droppedSnapshots: 0,
+      droppedEvents: 0,
+    };
   }
 
   async close(): Promise<void> {
     this.controlCallbacks.clear();
     this.eventCallbacks.clear();
     this.snapshotCallbacks.clear();
+    this.inputCallbacks.clear();
     this.peerCallbacks.clear();
   }
 

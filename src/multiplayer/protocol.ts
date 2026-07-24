@@ -79,6 +79,12 @@ export interface ResyncRequestMessage {
   afterEventId: number;
 }
 
+export interface SnapshotResyncMessage {
+  type: 'snapshot-resync';
+  version: number;
+  afterSnapshotSeq: number;
+}
+
 export interface PingMessage {
   type: 'ping' | 'pong';
   version: number;
@@ -157,6 +163,7 @@ export type ControlMessage =
   | InputMessage
   | PhaseCommandMessage
   | ResyncRequestMessage
+  | SnapshotResyncMessage
   | PingMessage
   | StartMessage
   | RoomFullMessage
@@ -441,6 +448,8 @@ export function parseNetworkInput(value: unknown): NetworkInput | null {
   if (
     !input
     || !safeSequence(input.seq)
+    || !safeSequence(input.clientTick)
+    || !safeSequence(input.snapshotSeq)
     || !safeSequence(input.abilityPressSeq)
     || !finite(input.moveX)
     || !finite(input.moveY)
@@ -452,7 +461,12 @@ export function parseNetworkInput(value: unknown): NetworkInput | null {
     moveY: input.moveY,
     abilityPressSeq: input.abilityPressSeq,
   });
-  return { ...normalized, seq: input.seq };
+  return {
+    ...normalized,
+    seq: input.seq,
+    clientTick: input.clientTick,
+    snapshotSeq: input.snapshotSeq,
+  };
 }
 
 export function parseControlMessage(value: unknown): ControlMessage | null {
@@ -526,6 +540,14 @@ export function parseControlMessage(value: unknown): ControlMessage | null {
     case 'resync-request':
       return safeSequence(message.afterEventId)
         ? { type: 'resync-request', version: NETWORK_VERSION, afterEventId: message.afterEventId }
+        : null;
+    case 'snapshot-resync':
+      return safeSequence(message.afterSnapshotSeq)
+        ? {
+          type: 'snapshot-resync',
+          version: NETWORK_VERSION,
+          afterSnapshotSeq: message.afterSnapshotSeq,
+        }
         : null;
     case 'ping':
     case 'pong':

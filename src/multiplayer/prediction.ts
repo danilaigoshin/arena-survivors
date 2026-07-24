@@ -30,12 +30,17 @@ export class GuestPrediction {
     player: Player,
     obstacles: readonly Obstacle[],
     authoritative: PredictedPose,
-    ackInputSeq: number,
+    ackInputTick: number,
     nowMs: number,
   ): void {
     const displayedX = player.x;
     const displayedY = player.y;
-    while (this.samples.length > 0 && this.samples[0].input.seq <= ackInputSeq) this.samples.shift();
+    let acknowledged = 0;
+    while (
+      acknowledged < this.samples.length
+      && this.samples[acknowledged].input.clientTick <= ackInputTick
+    ) acknowledged++;
+    if (acknowledged > 0) this.samples.splice(0, acknowledged);
 
     player.x = authoritative.x;
     player.y = authoritative.y;

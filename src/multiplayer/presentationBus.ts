@@ -11,3 +11,13 @@ export function setPresentationEventSink(sink: PresentationEventSink | null): vo
 export function emitPresentationEvent(event: GameplayEventDraft): void {
   activeSink?.(event);
 }
+
+export function withoutPresentationCapture<T>(operation: () => T): T {
+  const previous = activeSink;
+  activeSink = null;
+  try {
+    return operation();
+  } finally {
+    activeSink = previous;
+  }
+}

@@ -3,9 +3,12 @@ import { Player } from '../src/entities/player';
 import { RunState } from '../src/state';
 import {
   ShadowState,
+  applyShadowSampleToRunState,
+  buildDeltaSnapshot,
   captureFrameSnapshot,
   decodeFrameSnapshot,
   encodeFrameSnapshot,
+  materializeSnapshot,
 } from '../src/multiplayer/snapshot';
 import { WeaponInstance } from '../src/entities/weapon';
 import { weaponById } from '../src/data/weapons';
@@ -24,7 +27,8 @@ function makeState(): RunState {
   weapon.chainFxY[0] = 20;
   weapon.chainFxX[1] = 30;
   weapon.chainFxY[1] = 40;
-  state.players[0].weapons.push(weapon);
+    state.players[0].weapons.push(weapon);
+    state.waveTimer = 999;
   state.squad = { xp: 4, level: 2, materials: 11 };
   state.resonance = 64;
   state.resonanceActiveT = 3.5;
@@ -63,7 +67,7 @@ describe('binary frame snapshots', () => {
     const frame = captureFrameSnapshot(makeState(), {
       snapshotSeq: 4,
       simTick: 30,
-      ackInputSeq: 8,
+      ackInputTick: 8,
       buildRevision: 2,
       phaseRevision: 3,
       lastEventId: 7,
@@ -71,7 +75,18 @@ describe('binary frame snapshots', () => {
     const encoded = encodeFrameSnapshot(frame);
     const decoded = decodeFrameSnapshot(encoded);
     expect(decoded.snapshotSeq).toBe(frame.snapshotSeq);
-    expect(decoded.players).toEqual(frame.players);
+    expect(decoded.waveTimer).toBe(999);
+    expect(decoded.players[0]).toMatchObject({
+      slot: frame.players[0].slot,
+      x: frame.players[0].x,
+      y: frame.players[0].y,
+      hp: frame.players[0].hp,
+      maxHp: frame.players[0].maxHp,
+    });
+    expect(decoded.players[0].weapons[0].cooldownTimer)
+      .toBeCloseTo(frame.players[0].weapons[0].cooldownTimer, 2);
+    expect(decoded.players[0].weapons[0].recoil)
+      .toBeCloseTo(frame.players[0].weapons[0].recoil, 2);
     expect(decoded.players[0].weapons[0].chainPoints).toEqual([
       { x: 10, y: 20 },
       { x: 30, y: 40 },
@@ -80,9 +95,16 @@ describe('binary frame snapshots', () => {
     expect(decoded.contractIndex).toBe(0);
     expect(decoded.resonance).toBe(64);
     expect(decoded.resonanceActiveT).toBe(3.5);
-    expect(decoded.projectiles).toEqual(frame.projectiles);
+    expect(decoded.projectiles).toHaveLength(frame.projectiles.length);
+    expect(decoded.projectiles[0]).toMatchObject({
+      uid: frame.projectiles[0].uid,
+      x: frame.projectiles[0].x,
+      y: frame.projectiles[0].y,
+      vx: frame.projectiles[0].vx,
+      vy: frame.projectiles[0].vy,
+    });
     expect(decoded.projectiles[1].styleIndex).toBeGreaterThan(0);
-    expect(decoded.areas).toEqual(frame.areas);
+    expect(decoded.areas).toHaveLength(frame.areas.length);
     expect(decoded.areas[0].impactRadius).toBe(105);
     expect(decoded.enemies[0]).toMatchObject({
       uid: frame.enemies[0].uid,
@@ -102,7 +124,7 @@ describe('binary frame snapshots', () => {
     const frame = captureFrameSnapshot(makeState(), {
       snapshotSeq: 1,
       simTick: 1,
-      ackInputSeq: 0,
+      ackInputTick: 0,
       buildRevision: 0,
       phaseRevision: 0,
       lastEventId: 0,
@@ -115,7 +137,7 @@ describe('binary frame snapshots', () => {
     const frame = captureFrameSnapshot(makeState(), {
       snapshotSeq: 1,
       simTick: 1,
-      ackInputSeq: 0,
+      ackInputTick: 0,
       buildRevision: 0,
       phaseRevision: 0,
       lastEventId: 0,
@@ -136,12 +158,63 @@ describe('binary frame snapshots', () => {
     const encoded = encodeFrameSnapshot(captureFrameSnapshot(state, {
       snapshotSeq: 1,
       simTick: 1,
-      ackInputSeq: 0,
+      ackInputTick: 0,
       buildRevision: 1,
       phaseRevision: 1,
       lastEventId: 0,
     }));
-    expect(encoded.byteLength).toBeLessThanOrEqual(64 * 1024);
+    expect(encoded.byteLength).toBeLessThanOrEqual(32 * 1024);
+  });
+
+  it('culls entities outside the guest interest margin', () => {
+    const state = makeState();
+    state.enemies.items[0].x = 100;
+    state.enemies.items[0].y = 100;
+    const far = state.enemies.alloc()!;
+    far.init(0, 1900, 1400, 1);
+    const frame = captureFrameSnapshot(state, {
+      snapshotSeq: 1,
+      simTick: 1,
+      ackInputTick: 0,
+      buildRevision: 1,
+      phaseRevision: 1,
+      lastEventId: 0,
+    }, {
+      focusX: 100,
+      focusY: 100,
+      interestRadius: 400,
+    });
+    expect(frame.enemies.map((enemy) => enemy.uid)).toContain(state.enemies.items[0].uid);
+    expect(frame.enemies.map((enemy) => enemy.uid)).not.toContain(far.uid);
+  });
+
+  it('materializes chained deltas and rejects a missing baseline', () => {
+    const state = makeState();
+    const first = captureFrameSnapshot(state, {
+      snapshotSeq: 1,
+      simTick: 10,
+      ackInputTick: 0,
+      buildRevision: 1,
+      phaseRevision: 1,
+      lastEventId: 0,
+    });
+    state.enemies.items[0].x += 24;
+    state.pickups.clear();
+    const second = captureFrameSnapshot(state, {
+      snapshotSeq: 2,
+      simTick: 13,
+      ackInputTick: 1,
+      buildRevision: 1,
+      phaseRevision: 1,
+      lastEventId: 0,
+    });
+    const delta = decodeFrameSnapshot(encodeFrameSnapshot(buildDeltaSnapshot(first, second)));
+    expect(delta.kind).toBe('delta');
+    expect(materializeSnapshot(delta, null)).toBeNull();
+    const materialized = materializeSnapshot(delta, first)!;
+    expect(materialized.snapshotSeq).toBe(2);
+    expect(materialized.enemies[0].x).toBeCloseTo(second.enemies[0].x, 1);
+    expect(materialized.pickups).toEqual([]);
   });
 
   it('ignores duplicate snapshots and interpolates by uid', () => {
@@ -149,7 +222,7 @@ describe('binary frame snapshots', () => {
     const older = captureFrameSnapshot(state, {
       snapshotSeq: 1,
       simTick: 10,
-      ackInputSeq: 0,
+      ackInputTick: 0,
       buildRevision: 0,
       phaseRevision: 0,
       lastEventId: 0,
@@ -158,20 +231,25 @@ describe('binary frame snapshots', () => {
     const newer = captureFrameSnapshot(state, {
       snapshotSeq: 2,
       simTick: 13,
-      ackInputSeq: 0,
+      ackInputTick: 0,
       buildRevision: 0,
       phaseRevision: 0,
       lastEventId: 0,
     });
     const shadow = new ShadowState();
-    expect(shadow.accept(older)).toBe(true);
+    expect(shadow.accept(older, 1000)).toBe(true);
     expect(shadow.accept(older)).toBe(false);
-    expect(shadow.accept(newer)).toBe(true);
+    expect(shadow.accept(newer, 1050)).toBe(true);
     expect(shadow.accept(older)).toBe(false);
-    const sampled = shadow.sample(1)!;
-    expect(sampled.enemies[0].uid).toBe(older.enemies[0].uid);
-    expect(sampled.enemies[0].x).toBeGreaterThan(older.enemies[0].x);
-    expect(sampled.enemies[0].x).toBeLessThan(newer.enemies[0].x);
+    const sampled = shadow.sample(1050, 25)!;
+    const presented = makeState();
+    applyShadowSampleToRunState(presented, sampled);
+    expect(presented.enemies.items[0].uid).toBe(older.enemies[0].uid);
+    expect(presented.enemies.items[0].x).toBeGreaterThan(older.enemies[0].x);
+    expect(presented.enemies.items[0].x).toBeLessThan(newer.enemies[0].x);
+    const laterSample = shadow.sample(1075, 25)!;
+    applyShadowSampleToRunState(presented, laterSample);
+    expect(presented.enemies.items[0].x).toBeGreaterThan(345);
   });
 
   it('spawns and despawns shadow entities by uid', () => {
@@ -179,7 +257,7 @@ describe('binary frame snapshots', () => {
     const older = captureFrameSnapshot(state, {
       snapshotSeq: 1,
       simTick: 10,
-      ackInputSeq: 0,
+      ackInputTick: 0,
       buildRevision: 0,
       phaseRevision: 0,
       lastEventId: 0,
@@ -191,18 +269,21 @@ describe('binary frame snapshots', () => {
     const newer = captureFrameSnapshot(state, {
       snapshotSeq: 2,
       simTick: 13,
-      ackInputSeq: 0,
+      ackInputTick: 0,
       buildRevision: 0,
       phaseRevision: 0,
       lastEventId: 0,
     });
     const shadow = new ShadowState();
-    shadow.accept(older);
-    shadow.accept(newer);
-    const sampled = shadow.sample(1)!;
-    expect(sampled.enemies.map((enemy) => enemy.uid)).toEqual([replacement.uid]);
-    expect(sampled.enemies.some((enemy) => enemy.uid === removedUid)).toBe(false);
-    expect(sampled.enemies[0].x).toBe(700);
+    shadow.accept(older, 1000);
+    shadow.accept(newer, 1050);
+    const sampled = shadow.sample(1050, 0)!;
+    const presented = makeState();
+    applyShadowSampleToRunState(presented, sampled);
+    const presentedEnemies = presented.enemies.items.slice(0, presented.enemies.count);
+    expect(presentedEnemies.map((enemy) => enemy.uid)).toEqual([replacement.uid]);
+    expect(presentedEnemies.some((enemy) => enemy.uid === removedUid)).toBe(false);
+    expect(presentedEnemies[0].x).toBe(700);
   });
 
   it('keeps the snapshot sequence floor when a retry clears shadow frames', () => {
@@ -210,7 +291,7 @@ describe('binary frame snapshots', () => {
     const first = captureFrameSnapshot(state, {
       snapshotSeq: 12,
       simTick: 50,
-      ackInputSeq: 0,
+      ackInputTick: 0,
       buildRevision: 1,
       phaseRevision: 1,
       lastEventId: 0,

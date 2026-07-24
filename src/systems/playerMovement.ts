@@ -76,13 +76,44 @@ export function applyPlayerMovement(
 }
 
 export class RemoteInputProvider implements InputProvider {
-  private input: NetworkInput = { seq: 0, moveX: 0, moveY: 0, abilityPressSeq: 0 };
+  private input: NetworkInput = {
+    seq: 0,
+    clientTick: 0,
+    snapshotSeq: 0,
+    moveX: 0,
+    moveY: 0,
+    abilityPressSeq: 0,
+  };
+  private readonly queued = new Map<number, NetworkInput>();
   private receivedAt = -Infinity;
+  private appliedClientTick = 0;
+  private highestSequence = 0;
+  private latestSnapshotSeq = 0;
 
   accept(input: NetworkInput, nowMs: number): boolean {
-    if (!Number.isSafeInteger(input.seq) || input.seq <= this.input.seq) return false;
+    const timedOut = nowMs - this.receivedAt > 250;
+    if (
+      !Number.isSafeInteger(input.seq)
+      || !Number.isSafeInteger(input.clientTick)
+      || input.clientTick <= this.appliedClientTick
+      || (!timedOut && input.clientTick > this.appliedClientTick + 180)
+    ) return false;
+    if (timedOut && input.clientTick > this.appliedClientTick + 1) {
+      this.queued.clear();
+      this.appliedClientTick = input.clientTick - 1;
+    }
     const normalized = normalizePlayerInput(input);
-    this.input = { ...normalized, seq: input.seq };
+    const command = {
+      ...normalized,
+      seq: input.seq,
+      clientTick: input.clientTick,
+      snapshotSeq: input.snapshotSeq,
+    };
+    const existing = this.queued.get(command.clientTick);
+    if (existing && existing.seq >= command.seq) return false;
+    this.queued.set(command.clientTick, command);
+    this.highestSequence = Math.max(this.highestSequence, command.seq);
+    this.latestSnapshotSeq = Math.max(this.latestSnapshotSeq, command.snapshotSeq);
     this.receivedAt = nowMs;
     return true;
   }
@@ -91,15 +122,56 @@ export class RemoteInputProvider implements InputProvider {
     if (nowMs - this.receivedAt > 250) {
       return { moveX: 0, moveY: 0, abilityPressSeq: this.input.abilityPressSeq };
     }
+    let nextTick = this.appliedClientTick + 1;
+    let next = this.queued.get(nextTick);
+    if (!next && this.appliedClientTick === 0 && this.queued.size > 0) {
+      let firstTick = Infinity;
+      for (const tick of this.queued.keys()) firstTick = Math.min(firstTick, tick);
+      if (firstTick > 3 && Number.isFinite(firstTick)) {
+        this.appliedClientTick = firstTick - 1;
+        nextTick = firstTick;
+        next = this.queued.get(nextTick);
+      }
+    }
+    if (next) {
+      this.queued.delete(nextTick);
+      this.input = next;
+    } else if (this.input.clientTick > 0) {
+      // Inputs are state commands. A missing unreliable packet can be
+      // reconstructed from the previous axes and cumulative ability counter.
+      this.input.clientTick = nextTick;
+    } else {
+      return { moveX: 0, moveY: 0, abilityPressSeq: 0 };
+    }
+    this.appliedClientTick = nextTick;
     return this.input;
   }
 
   get lastSequence(): number {
-    return this.input.seq;
+    return this.highestSequence;
+  }
+
+  get lastAppliedClientTick(): number {
+    return this.appliedClientTick;
+  }
+
+  get lastSnapshotSequence(): number {
+    return this.latestSnapshotSeq;
   }
 
   reset(): void {
-    this.input = { seq: 0, moveX: 0, moveY: 0, abilityPressSeq: 0 };
+    this.input = {
+      seq: 0,
+      clientTick: 0,
+      snapshotSeq: 0,
+      moveX: 0,
+      moveY: 0,
+      abilityPressSeq: 0,
+    };
+    this.queued.clear();
     this.receivedAt = -Infinity;
+    this.appliedClientTick = 0;
+    this.highestSequence = 0;
+    this.latestSnapshotSeq = 0;
   }
 }

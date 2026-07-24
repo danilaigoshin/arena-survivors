@@ -10,13 +10,34 @@ import { NETWORK_VERSION } from '../src/multiplayer/types';
 
 describe('network protocol validation', () => {
   it('normalizes movement and rejects non-finite packets', () => {
-    const input = parseNetworkInput({ seq: 1, moveX: 1, moveY: 1, abilityPressSeq: 2 })!;
+    const input = parseNetworkInput({
+      seq: 1,
+      clientTick: 3,
+      snapshotSeq: 2,
+      moveX: 1,
+      moveY: 1,
+      abilityPressSeq: 2,
+    })!;
     expect(input.seq).toBe(1);
     expect(input.abilityPressSeq).toBe(2);
     expect(input.moveX).toBeCloseTo(Math.SQRT1_2);
     expect(input.moveY).toBeCloseTo(Math.SQRT1_2);
-    expect(parseNetworkInput({ seq: 2, moveX: Number.NaN, moveY: 0, abilityPressSeq: 0 })).toBeNull();
-    expect(parseNetworkInput({ seq: 2, moveX: Infinity, moveY: 0, abilityPressSeq: 0 })).toBeNull();
+    expect(parseNetworkInput({
+      seq: 2,
+      clientTick: 4,
+      snapshotSeq: 2,
+      moveX: Number.NaN,
+      moveY: 0,
+      abilityPressSeq: 0,
+    })).toBeNull();
+    expect(parseNetworkInput({
+      seq: 2,
+      clientTick: 4,
+      snapshotSeq: 2,
+      moveX: Infinity,
+      moveY: 0,
+      abilityPressSeq: 0,
+    })).toBeNull();
   });
 
   it('filters unknown unlocks and clamps perk levels', () => {
@@ -37,7 +58,14 @@ describe('network protocol validation', () => {
     expect(parseControlMessage({
       type: 'input',
       version: NETWORK_VERSION + 1,
-      input: { seq: 1, moveX: 0, moveY: 0, abilityPressSeq: 0 },
+      input: {
+        seq: 1,
+        clientTick: 1,
+        snapshotSeq: 0,
+        moveX: 0,
+        moveY: 0,
+        abilityPressSeq: 0,
+      },
     })).toBeNull();
     expect(parseControlMessage({
       type: 'phase-command',

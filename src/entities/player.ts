@@ -252,15 +252,19 @@ export class Player {
   }
 
   activateAbility(): void {
+    this.activateAbilityPresentation();
+    if (this.character.ability.id === 'adaptation' && this.hasAbilityAugment('adaptation_heal')) {
+      const classCount = classCounts(this.weapons.map((w) => w.def.id)).size;
+      this.hp = Math.min(this.stats.maxHp, this.hp + this.stats.maxHp * classCount * 0.02);
+    }
+  }
+
+  activateAbilityPresentation(): void {
     this.clearAbilityEffects();
     switch (this.character.ability.id) {
       case 'adaptation':
         this.abilityActiveT = this.abilityDuration();
         this.abilityPower = classCounts(this.weapons.map((w) => w.def.id)).size * this.adaptationBonusPerClass();
-        if (this.hasAbilityAugment('adaptation_heal')) {
-          const classCount = classCounts(this.weapons.map((w) => w.def.id)).size;
-          this.hp = Math.min(this.stats.maxHp, this.hp + this.stats.maxHp * classCount * 0.02);
-        }
         break;
       case 'whirlwind':
         this.abilityActiveT = this.abilityDuration();

@@ -16,6 +16,7 @@ import {
   type StartMessage,
 } from './protocol';
 import {
+  compactGameplayEvents,
   GameplayEventJournal,
   GameplayEventReceiver,
   type GameplayEvent,
@@ -24,10 +25,12 @@ import {
 import { GuestPrediction } from './prediction';
 import {
   ShadowState,
-  applySnapshotToRunState,
+  applyShadowSampleToRunState,
+  buildDeltaSnapshot,
   captureFrameSnapshot,
   decodeFrameSnapshot,
   encodeFrameSnapshot,
+  materializeSnapshot,
   type FrameSnapshot,
 } from './snapshot';
 import { applyBuildState, captureBuildState, type BuildState, type PhaseState } from './stateProtocol';
@@ -38,8 +41,10 @@ import {
   type SerializedPlayerProfile,
   type SessionRole,
 } from './types';
-import { setPresentationEventSink } from './presentationBus';
+import { setPresentationEventSink, withoutPresentationCapture } from './presentationBus';
 import { replayGameplayEvent } from './eventReplay';
+import { decodeInputPacket, encodeInputPacket, INPUT_REDUNDANCY } from './realtime';
+import { playAbilityPresentation } from '../render/abilityPresentation';
 
 export type SessionStatus =
   | 'loading'
@@ -56,12 +61,25 @@ export type SessionStatus =
 
 export interface NetworkMetrics {
   rtt: number;
+  iceRtt: number;
+  availableOutgoingBitrate: number;
+  bufferedAmount: number;
+  realtimeReady: boolean;
+  candidateRoute: string;
   snapshotBytes: number;
+  snapshotBytesPerSecond: number;
+  snapshotRate: number;
+  snapshotJitter: number;
+  snapshotDecodeMs: number;
+  snapshotApplyMs: number;
   snapshotSendMs: number;
   snapshotPending: boolean;
+  droppedSnapshots: number;
+  droppedEvents: number;
   interpolationAge: number;
   predictionCorrection: number;
   lastInputSeq: number;
+  lastInputTick: number;
   lastEventId: number;
   buildRevision: number;
   phaseRevision: number;
@@ -87,12 +105,25 @@ export interface NetworkSession {
 
 const emptyMetrics = (): NetworkMetrics => ({
   rtt: 0,
+  iceRtt: 0,
+  availableOutgoingBitrate: 0,
+  bufferedAmount: 0,
+  realtimeReady: false,
+  candidateRoute: '',
   snapshotBytes: 0,
+  snapshotBytesPerSecond: 0,
+  snapshotRate: 0,
+  snapshotJitter: 0,
+  snapshotDecodeMs: 0,
+  snapshotApplyMs: 0,
   snapshotSendMs: 0,
   snapshotPending: false,
+  droppedSnapshots: 0,
+  droppedEvents: 0,
   interpolationAge: 0,
   predictionCorrection: 0,
   lastInputSeq: 0,
+  lastInputTick: 0,
   lastEventId: 0,
   buildRevision: 0,
   phaseRevision: 0,
@@ -107,6 +138,8 @@ abstract class BaseSession implements NetworkSession {
   protected readonly cleanups: (() => void)[] = [];
   protected closed = false;
   private lastPingAt = 0;
+  private lastTransportStatsAt = 0;
+  private transportStatsPending = false;
 
   constructor(protected readonly transport: Transport) {}
 
@@ -164,13 +197,46 @@ abstract class BaseSession implements NetworkSession {
   }
 
   protected updatePing(nowMs: number): void {
-    if (this.status !== 'connected' || !this.acceptedPeerId || nowMs - this.lastPingAt < 1000) return;
-    this.lastPingAt = nowMs;
-    this.ignoreTransportFailure(this.transport.sendControl(this.acceptedPeerId, {
-      type: 'ping',
-      version: NETWORK_VERSION,
-      sentAt: nowMs,
-    }));
+    if (this.status !== 'connected' || !this.acceptedPeerId) return;
+    if (nowMs - this.lastPingAt >= 1000) {
+      this.lastPingAt = nowMs;
+      this.ignoreTransportFailure(this.transport.sendControl(this.acceptedPeerId, {
+        type: 'ping',
+        version: NETWORK_VERSION,
+        sentAt: nowMs,
+      }));
+    }
+    if (
+      !this.transportStatsPending
+      && nowMs - this.lastTransportStatsAt >= 1000
+    ) {
+      this.lastTransportStatsAt = nowMs;
+      this.transportStatsPending = true;
+      void this.transport.getDiagnostics(this.acceptedPeerId)
+        .then((diagnostics) => {
+          if (this.closed) return;
+          this.metrics.iceRtt = diagnostics.iceRttMs;
+          this.metrics.availableOutgoingBitrate = diagnostics.availableOutgoingBitrate;
+          this.metrics.bufferedAmount = diagnostics.bufferedAmount;
+          this.metrics.realtimeReady = diagnostics.realtimeReady;
+          this.metrics.candidateRoute = [
+            diagnostics.localCandidateType,
+            diagnostics.remoteCandidateType,
+          ].filter(Boolean).join('→');
+          this.metrics.droppedSnapshots = Math.max(
+            this.metrics.droppedSnapshots,
+            diagnostics.droppedSnapshots,
+          );
+          this.metrics.droppedEvents = Math.max(
+            this.metrics.droppedEvents,
+            diagnostics.droppedEvents,
+          );
+        })
+        .catch(() => {})
+        .finally(() => {
+          this.transportStatsPending = false;
+        });
+    }
   }
 
   protected handlePing(peerId: string, message: ControlMessage): boolean {
@@ -218,6 +284,13 @@ export class HostSession extends BaseSession {
   private readonly eventJournal = new GameplayEventJournal();
   private lastPublishedEventId = 0;
   private currentPhaseState: PhaseState | null = null;
+  private snapshotWindowStartedAt = 0;
+  private snapshotWindowBytes = 0;
+  private snapshotWindowCount = 0;
+  private previousSnapshot: FrameSnapshot | null = null;
+  private forceKeyframe = true;
+  private snapshotIntervalTicks = 3;
+  private lastSnapshotAtTick = 0;
 
   private constructor(
     transport: Transport,
@@ -260,6 +333,14 @@ export class HostSession extends BaseSession {
       }
     }));
     this.installCommonControl((peerId, message) => this.onControl(peerId, message));
+    this.cleanups.push(this.transport.onInput((peerId, data) => {
+      if (peerId !== this.acceptedPeerId) return;
+      try {
+        this.queueInputs(decodeInputPacket(data));
+      } catch {
+        // Malformed realtime inputs never reach the authoritative provider.
+      }
+    }));
   }
 
   private sendHandshake(peerId: string): Promise<void> {
@@ -287,7 +368,11 @@ export class HostSession extends BaseSession {
       }
       if (!this.acceptedPeerId) {
         this.acceptedPeerId = peerId;
-        this.snapshotSender = new LatestSnapshotSender(this.transport, peerId);
+        this.snapshotSender = new LatestSnapshotSender(
+          this.transport,
+          peerId,
+          () => { this.forceKeyframe = true; },
+        );
       }
       this.guest = { characterId: message.characterId, profile: message.profile, ready: false };
       this.setStatus('connected');
@@ -306,10 +391,9 @@ export class HostSession extends BaseSession {
       this.ignoreTransportFailure(this.broadcastLobbyState());
       this.changed();
     } else if (message.type === 'input') {
-      // Input is cumulative (sequence + ability edge counter), so only the
-      // newest packet is useful before the next host simulation step.
-      this.pendingInputs[0] = message.input;
-      this.pendingInputs.length = 1;
+      // Compatibility fallback for browsers that could not open the
+      // negotiated realtime input channel.
+      this.queueInputs([message.input]);
     } else if (message.type === 'phase-command') {
       if (
         !this.currentPhaseState
@@ -328,10 +412,19 @@ export class HostSession extends BaseSession {
         this.publishEvents(batch);
         afterEventId = batch.lastEventId;
       }
+    } else if (message.type === 'snapshot-resync') {
+      this.forceKeyframe = true;
     }
   }
 
   private readonly pendingInputs: NetworkInput[] = [];
+
+  private queueInputs(inputs: readonly NetworkInput[]): void {
+    this.pendingInputs.push(...inputs);
+    if (this.pendingInputs.length > 180) {
+      this.pendingInputs.splice(0, this.pendingInputs.length - 180);
+    }
+  }
 
   private lobbyState(): LobbyStateMessage | null {
     if (!this.guest) return null;
@@ -385,6 +478,10 @@ export class HostSession extends BaseSession {
     game.remoteInput.reset();
     this.pendingInputs.length = 0;
     this.pendingPhaseCommands.length = 0;
+    this.previousSnapshot = null;
+    this.forceKeyframe = true;
+    this.snapshotIntervalTicks = 3;
+    this.lastSnapshotAtTick = 0;
     this.running = true;
     this.sessionId = createSessionId();
     const start: StartMessage = {
@@ -427,6 +524,10 @@ export class HostSession extends BaseSession {
     game.remoteInput.reset();
     this.pendingInputs.length = 0;
     this.pendingPhaseCommands.length = 0;
+    this.previousSnapshot = null;
+    this.forceKeyframe = true;
+    this.snapshotIntervalTicks = 3;
+    this.lastSnapshotAtTick = 0;
     this.running = true;
     this.buildRevision++;
     this.sessionId = createSessionId();
@@ -499,13 +600,6 @@ export class HostSession extends BaseSession {
 
   override endPresentationCapture(): void {
     setPresentationEventSink(null);
-    for (;;) {
-      const batch = this.eventJournal.batchAfter(this.lastPublishedEventId);
-      if (!batch) return;
-      this.lastPublishedEventId = batch.lastEventId;
-      this.metrics.lastEventId = batch.lastEventId;
-      this.publishEvents(batch);
-    }
   }
 
   handleVisibility(game: Game, hidden: boolean): void {
@@ -559,10 +653,10 @@ export class HostSession extends BaseSession {
   update(game: Game, _dt: number): void {
     const now = performance.now();
     this.updatePing(now);
-    while (this.pendingInputs.length > 0) {
-      const input = this.pendingInputs.shift()!;
-      game.remoteInput.accept(input, now);
+    for (let index = 0; index < this.pendingInputs.length; index++) {
+      game.remoteInput.accept(this.pendingInputs[index], now);
     }
+    this.pendingInputs.length = 0;
     if (
       !this.running
       || !this.snapshotSender
@@ -570,21 +664,88 @@ export class HostSession extends BaseSession {
       || game.scene.wantsJoystick !== true
     ) return;
     this.simTick++;
-    if (this.simTick % 3 !== 0) return;
+    const bitrateConstrained = this.metrics.availableOutgoingBitrate > 0
+      && this.metrics.snapshotBytesPerSecond * 8
+        > this.metrics.availableOutgoingBitrate * 0.65;
+    const congested = bitrateConstrained
+      || this.snapshotSender.metrics.pending
+      || this.snapshotSender.metrics.bufferedAmount > 32 * 1024;
+    if (congested) this.snapshotIntervalTicks = Math.min(6, this.snapshotIntervalTicks + 1);
+    else if (this.snapshotSender.metrics.bufferedAmount < 8 * 1024) {
+      this.snapshotIntervalTicks = Math.max(3, this.snapshotIntervalTicks - 1);
+    }
+    if (this.simTick - this.lastSnapshotAtTick < this.snapshotIntervalTicks) return;
+    this.lastSnapshotAtTick = this.simTick;
+    const rawBatch = this.eventJournal.batchAfter(this.lastPublishedEventId, 512);
+    if (rawBatch) {
+      this.lastPublishedEventId = rawBatch.lastEventId;
+      this.metrics.lastEventId = rawBatch.lastEventId;
+      const events = compactGameplayEvents(rawBatch.events);
+      if (events.length > 0) {
+        this.publishEvents({
+          version: 1,
+          firstEventId: events[0].eventId,
+          lastEventId: events[events.length - 1].eventId,
+          events,
+        });
+      }
+    }
+    const guestPlayer = game.state.playerBySlot(1);
     const frame = captureFrameSnapshot(game.state, {
       snapshotSeq: ++this.snapshotSeq,
       simTick: this.simTick,
-      ackInputSeq: game.remoteInput.lastSequence,
+      ackInputTick: game.remoteInput.lastAppliedClientTick,
       buildRevision: this.buildRevision,
       phaseRevision: this.phaseRevision,
       lastEventId: this.metrics.lastEventId,
-    });
-    this.snapshotSender.enqueue(encodeFrameSnapshot(frame));
+    }, guestPlayer ? { focusX: guestPlayer.x, focusY: guestPlayer.y } : undefined);
+    const mustKeyframe = this.forceKeyframe
+      || !this.previousSnapshot
+      || this.snapshotSeq % 10 === 1
+      || this.snapshotSender.hasPendingSnapshot;
+    const packet = mustKeyframe || !this.previousSnapshot
+      ? frame
+      : buildDeltaSnapshot(this.previousSnapshot, frame);
+    this.forceKeyframe = false;
+    this.previousSnapshot = frame;
+    const encoded = encodeFrameSnapshot(packet);
+    this.snapshotSender.enqueue(encoded);
+    if (this.snapshotWindowStartedAt === 0) this.snapshotWindowStartedAt = now;
+    this.snapshotWindowBytes += encoded.byteLength;
+    this.snapshotWindowCount++;
+    const windowDuration = now - this.snapshotWindowStartedAt;
+    if (windowDuration >= 1000) {
+      this.metrics.snapshotBytesPerSecond = this.snapshotWindowBytes * 1000 / windowDuration;
+      this.metrics.snapshotRate = this.snapshotWindowCount * 1000 / windowDuration;
+      this.snapshotWindowStartedAt = now;
+      this.snapshotWindowBytes = 0;
+      this.snapshotWindowCount = 0;
+    }
     this.metrics.snapshotBytes = this.snapshotSender.metrics.bytes;
     this.metrics.snapshotSendMs = this.snapshotSender.metrics.sendDurationMs;
     this.metrics.snapshotPending = this.snapshotSender.metrics.pending;
+    this.metrics.droppedSnapshots = Math.max(
+      this.metrics.droppedSnapshots,
+      this.snapshotSender.metrics.dropped,
+    );
+    this.metrics.bufferedAmount = Math.max(
+      this.metrics.bufferedAmount,
+      this.snapshotSender.metrics.bufferedAmount,
+    );
     this.metrics.lastInputSeq = game.remoteInput.lastSequence;
+    this.metrics.lastInputTick = game.remoteInput.lastAppliedClientTick;
   }
+}
+
+interface PredictedAbilityState {
+  inputTick: number;
+  abilityPressSeq: number;
+  startedAtMs: number;
+  duration: number;
+  cooldown: number;
+  abilityX: number;
+  abilityY: number;
+  abilityPower: number;
 }
 
 export class GuestSession extends BaseSession {
@@ -596,18 +757,33 @@ export class GuestSession extends BaseSession {
   phaseState: PhaseState | null = null;
   private readonly shadow = new ShadowState();
   private readonly prediction = new GuestPrediction();
-  private readonly eventReceiver = new GameplayEventReceiver();
-  private resyncRequestedAfter: number | null = null;
+  private readonly eventReceiver = new GameplayEventReceiver(true);
   private readonly pendingGameplayEvents: GameplayEvent[] = [];
   private readonly pendingSnapshots: FrameSnapshot[] = [];
+  private wireSnapshot: FrameSnapshot | null = null;
+  private lastSnapshotResyncAt = -Infinity;
   private lastSnapshotReceivedAt = 0;
+  private snapshotWindowStartedAt = 0;
+  private snapshotWindowBytes = 0;
+  private snapshotWindowCount = 0;
   private pendingBuild: BuildState | null = null;
   private lastAppliedBuildRevision = 0;
   private pendingStart: StartMessage | null = null;
   private inputSeq = 0;
-  private lastInputSentAt = -Infinity;
-  private lastInput: NetworkInput = { seq: 0, moveX: 0, moveY: 0, abilityPressSeq: 0 };
+  private clientTick = 0;
+  private lastInput: NetworkInput = {
+    seq: 0,
+    clientTick: 0,
+    snapshotSeq: 0,
+    moveX: 0,
+    moveY: 0,
+    abilityPressSeq: 0,
+  };
+  private readonly inputHistory: NetworkInput[] = [];
   private predictedBase: { x: number; y: number } | null = null;
+  private predictedAbility: PredictedAbilityState | null = null;
+  private lastAbilityAttemptSeq = 0;
+  private predictedAbilityPressSeq = 0;
   private timeout: number | null = null;
   private readonly appliedResults = new Set<string>();
   lastEndResult: EndResult | null = null;
@@ -666,13 +842,49 @@ export class GuestSession extends BaseSession {
     this.installCommonControl((peerId, message) => this.onControl(peerId, message));
     this.cleanups.push(this.transport.onSnapshot((peerId, data) => {
       if (peerId !== this.acceptedPeerId) return;
+      const decodeStartedAt = performance.now();
       try {
-        const snapshot = decodeFrameSnapshot(data);
-        if (this.shadow.accept(snapshot)) {
+        const packet = decodeFrameSnapshot(data);
+        const receivedAt = performance.now();
+        if (
+          this.wireSnapshot
+          && packet.snapshotSeq <= this.wireSnapshot.snapshotSeq
+        ) return;
+        const snapshot = materializeSnapshot(packet, this.wireSnapshot);
+        if (!snapshot) {
+          if (
+            this.acceptedPeerId
+            && receivedAt - this.lastSnapshotResyncAt >= 250
+          ) {
+            this.lastSnapshotResyncAt = receivedAt;
+            this.ignoreTransportFailure(this.transport.sendControl(this.acceptedPeerId, {
+              type: 'snapshot-resync',
+              version: NETWORK_VERSION,
+              afterSnapshotSeq: this.wireSnapshot?.snapshotSeq ?? 0,
+            }));
+          }
+          return;
+        }
+        if (this.shadow.accept(snapshot, receivedAt)) {
+          this.wireSnapshot = snapshot;
           this.metrics.snapshotBytes = data.byteLength;
-          this.lastSnapshotReceivedAt = performance.now();
+          const decodeMs = receivedAt - decodeStartedAt;
+          this.metrics.snapshotDecodeMs += (decodeMs - this.metrics.snapshotDecodeMs) * 0.2;
+          this.metrics.snapshotJitter = this.shadow.arrivalJitterMs;
+          this.lastSnapshotReceivedAt = receivedAt;
           this.pendingSnapshots[0] = snapshot;
           this.pendingSnapshots.length = 1;
+          if (this.snapshotWindowStartedAt === 0) this.snapshotWindowStartedAt = receivedAt;
+          this.snapshotWindowBytes += data.byteLength;
+          this.snapshotWindowCount++;
+          const windowDuration = receivedAt - this.snapshotWindowStartedAt;
+          if (windowDuration >= 1000) {
+            this.metrics.snapshotBytesPerSecond = this.snapshotWindowBytes * 1000 / windowDuration;
+            this.metrics.snapshotRate = this.snapshotWindowCount * 1000 / windowDuration;
+            this.snapshotWindowStartedAt = receivedAt;
+            this.snapshotWindowBytes = 0;
+            this.snapshotWindowCount = 0;
+          }
         }
       } catch {
         // Invalid binary input never reaches the shadow world.
@@ -681,21 +893,11 @@ export class GuestSession extends BaseSession {
     this.cleanups.push(this.transport.onEvents((peerId, rawBatch) => {
       if (peerId !== this.acceptedPeerId || !rawBatch || typeof rawBatch !== 'object') return;
       const result = this.eventReceiver.accept(rawBatch as GameplayEventBatch);
-      if (
-        result.gapAfter !== null
-        && this.resyncRequestedAfter !== result.gapAfter
-      ) {
-        this.resyncRequestedAfter = result.gapAfter;
-        this.ignoreTransportFailure(this.transport.sendControl(peerId, {
-          type: 'resync-request',
-          version: NETWORK_VERSION,
-          afterEventId: result.gapAfter,
-        }));
-      }
       if (result.events.length > 0) {
-        this.resyncRequestedAfter = null;
         this.pendingGameplayEvents.push(...result.events);
-        this.onGameplayEvents?.(result.events);
+        if (this.pendingGameplayEvents.length > 512) {
+          this.pendingGameplayEvents.splice(0, this.pendingGameplayEvents.length - 512);
+        }
       }
     }));
   }
@@ -808,22 +1010,41 @@ export class GuestSession extends BaseSession {
     }));
   }
 
+  private transmitInput(inputState: {
+    moveX: number;
+    moveY: number;
+    abilityPressSeq: number;
+  }): NetworkInput {
+    this.lastInput = {
+      ...inputState,
+      seq: ++this.inputSeq,
+      clientTick: ++this.clientTick,
+      snapshotSeq: this.shadow.latestSequence,
+    };
+    if (this.inputHistory.length < INPUT_REDUNDANCY) {
+      this.inputHistory.push(this.lastInput);
+    } else {
+      this.inputHistory[0] = this.inputHistory[1];
+      this.inputHistory[1] = this.inputHistory[2];
+      this.inputHistory[2] = this.lastInput;
+    }
+    if (this.acceptedPeerId) {
+      this.ignoreTransportFailure(
+        this.transport.sendInput(this.acceptedPeerId, encodeInputPacket(this.inputHistory)),
+      );
+    }
+    return this.lastInput;
+  }
+
   handleVisibility(_game: Game, hidden: boolean): void {
     if (!hidden || !this.acceptedPeerId || this.status !== 'connected') return;
     this.prediction.clear();
     this.predictedBase = null;
-    this.lastInput = {
-      seq: ++this.inputSeq,
+    this.transmitInput({
       moveX: 0,
       moveY: 0,
       abilityPressSeq: this.lastInput.abilityPressSeq,
-    };
-    this.lastInputSentAt = performance.now();
-    this.ignoreTransportFailure(this.transport.sendControl(this.acceptedPeerId, {
-      type: 'input',
-      version: NETWORK_VERSION,
-      input: this.lastInput,
-    }));
+    });
   }
 
   private prepareRun(game: Game, start: StartMessage): boolean {
@@ -835,10 +1056,28 @@ export class GuestSession extends BaseSession {
     this.shadow.clear();
     this.prediction.clear();
     this.predictedBase = null;
+    this.predictedAbility = null;
+    this.lastAbilityAttemptSeq = 0;
+    this.predictedAbilityPressSeq = 0;
     this.pendingSnapshots.length = 0;
+    this.wireSnapshot = null;
+    this.lastSnapshotResyncAt = -Infinity;
     this.pendingGameplayEvents.length = 0;
-    this.resyncRequestedAfter = null;
     this.lastSnapshotReceivedAt = 0;
+    this.snapshotWindowStartedAt = 0;
+    this.snapshotWindowBytes = 0;
+    this.snapshotWindowCount = 0;
+    this.inputHistory.length = 0;
+    this.inputSeq = 0;
+    this.clientTick = 0;
+    this.lastInput = {
+      seq: 0,
+      clientTick: 0,
+      snapshotSeq: 0,
+      moveX: 0,
+      moveY: 0,
+      abilityPressSeq: 0,
+    };
     this.phaseState = null;
     this.lastEndResult = null;
     this.lastProgressionGain = null;
@@ -878,21 +1117,22 @@ export class GuestSession extends BaseSession {
     addShards(result.shardsEarned);
   }
 
-  private processSnapshot(game: Game, snapshot: FrameSnapshot, nowMs: number): void {
-    const predictedX = game.localPlayer.x;
-    const predictedY = game.localPlayer.y;
-    const sampled = this.shadow.sample();
-    if (sampled) applySnapshotToRunState(game.state, sampled);
+  private processSnapshot(
+    game: Game,
+    snapshot: FrameSnapshot,
+    nowMs: number,
+    displayed: { x: number; y: number },
+  ): void {
     const authoritative = snapshot.players.find((player) => player.slot === 1);
     const phaseAllowsPrediction = !this.phaseState || this.phaseState.phase === 'run';
     if (authoritative && phaseAllowsPrediction && !authoritative.downed) {
-      game.localPlayer.x = predictedX;
-      game.localPlayer.y = predictedY;
+      game.localPlayer.x = displayed.x;
+      game.localPlayer.y = displayed.y;
       this.prediction.reconcile(
         game.localPlayer,
         game.state.obstacles,
         { x: authoritative.x, y: authoritative.y },
-        snapshot.ackInputSeq,
+        snapshot.ackInputTick,
         nowMs,
       );
       this.predictedBase = { x: game.localPlayer.x, y: game.localPlayer.y };
@@ -903,19 +1143,90 @@ export class GuestSession extends BaseSession {
       this.prediction.clear();
       this.predictedBase = null;
     }
-    this.metrics.lastInputSeq = Math.max(this.metrics.lastInputSeq, snapshot.ackInputSeq);
+    if (
+      this.predictedAbility
+      && snapshot.ackInputTick >= this.predictedAbility.inputTick
+      && authoritative
+      && authoritative.abilityCd <= 0
+      && authoritative.abilityActiveT <= 0
+    ) {
+      this.predictedAbility = null;
+    }
+    this.metrics.lastInputTick = Math.max(this.metrics.lastInputTick, snapshot.ackInputTick);
     this.metrics.lastEventId = Math.max(this.metrics.lastEventId, snapshot.lastEventId);
     this.metrics.buildRevision = Math.max(this.metrics.buildRevision, snapshot.buildRevision);
     this.metrics.phaseRevision = Math.max(this.metrics.phaseRevision, snapshot.phaseRevision);
     this.metrics.predictionCorrection = this.prediction.lastCorrectionDistance;
   }
 
+  private beginPredictedAbility(game: Game, command: NetworkInput, nowMs: number): void {
+    const player = game.localPlayer;
+    if (command.abilityPressSeq <= this.lastAbilityAttemptSeq) return;
+    this.lastAbilityAttemptSeq = command.abilityPressSeq;
+    if (player.downed || player.abilityCd > 0) return;
+    this.predictedAbilityPressSeq = command.abilityPressSeq;
+    player.abilityCd = player.abilityCooldown();
+    player.activateAbilityPresentation();
+    this.predictedAbility = {
+      inputTick: command.clientTick,
+      abilityPressSeq: command.abilityPressSeq,
+      startedAtMs: nowMs,
+      duration: player.abilityDuration(),
+      cooldown: player.abilityCooldown(),
+      abilityX: player.abilityX,
+      abilityY: player.abilityY,
+      abilityPower: player.abilityPower,
+    };
+    withoutPresentationCapture(() => playAbilityPresentation(player));
+  }
+
+  private applyPredictedAbility(game: Game, nowMs: number): void {
+    const predicted = this.predictedAbility;
+    if (!predicted) return;
+    const player = game.localPlayer;
+    const elapsed = Math.max(0, (nowMs - predicted.startedAtMs) / 1000);
+    player.abilityCd = Math.max(0, predicted.cooldown - elapsed);
+    const active = Math.max(0, predicted.duration - elapsed);
+    if (active > 0) {
+      player.abilityActiveT = active;
+      player.abilityX = predicted.abilityX;
+      player.abilityY = predicted.abilityY;
+      player.abilityPower = predicted.abilityPower;
+    } else if (player.character.ability.id === 'overheat') {
+      player.abilityActiveT = 0;
+      player.abilityRecoveryT = Math.max(
+        0,
+        player.overheatRecoveryDuration() - (elapsed - predicted.duration),
+      );
+    }
+    if (player.abilityCd <= 0 && active <= 0) this.predictedAbility = null;
+  }
+
+  private replayReadyEvents(game: Game): void {
+    const presentationTick = this.shadow.presentationTick;
+    if (presentationTick <= 0) return;
+    const replayed: GameplayEvent[] = [];
+    let readyCount = 0;
+    while (
+      readyCount < this.pendingGameplayEvents.length
+      && this.pendingGameplayEvents[readyCount].simTick <= presentationTick + 0.5
+    ) {
+      const event = this.pendingGameplayEvents[readyCount++];
+      if (
+        event.type === 'ability'
+        && event.playerSlot === game.localPlayerSlot
+        && event.abilityPressSeq <= this.predictedAbilityPressSeq
+      ) continue;
+      replayGameplayEvent(game, event);
+      replayed.push(event);
+    }
+    if (readyCount > 0) this.pendingGameplayEvents.splice(0, readyCount);
+    if (replayed.length > 0) this.onGameplayEvents?.(replayed);
+  }
+
   update(game: Game, dt: number): void {
     const nowMs = performance.now();
     this.updatePing(nowMs);
-    this.metrics.interpolationAge = this.lastSnapshotReceivedAt > 0
-      ? 100 + Math.max(0, nowMs - this.lastSnapshotReceivedAt)
-      : 0;
     if (this.pendingStart) {
       const start = this.pendingStart;
       this.pendingStart = null;
@@ -928,48 +1239,54 @@ export class GuestSession extends BaseSession {
         this.pendingBuild = null;
       }
     }
+
+    const displayed = { x: game.localPlayer.x, y: game.localPlayer.y };
+    const sample = this.shadow.sample(nowMs);
+    if (sample && this.sessionId && game.sessionRole === 'guest') {
+      const applyStartedAt = performance.now();
+      applyShadowSampleToRunState(game.state, sample);
+      const applyMs = performance.now() - applyStartedAt;
+      this.metrics.snapshotApplyMs += (applyMs - this.metrics.snapshotApplyMs) * 0.2;
+      this.metrics.interpolationAge = sample.interpolationDelayMs;
+      this.metrics.snapshotJitter = this.shadow.arrivalJitterMs;
+    } else if (this.lastSnapshotReceivedAt > 0) {
+      this.metrics.interpolationAge = this.shadow.interpolationDelayMs
+        + Math.max(0, nowMs - this.lastSnapshotReceivedAt - 100);
+    }
+
     if (this.pendingSnapshots.length > 0) {
       const latestSnapshot = this.pendingSnapshots[this.pendingSnapshots.length - 1];
       this.pendingSnapshots.length = 0;
-      this.processSnapshot(game, latestSnapshot, nowMs);
+      this.processSnapshot(game, latestSnapshot, nowMs, displayed);
     }
-    while (this.pendingGameplayEvents.length > 0) {
-      replayGameplayEvent(game, this.pendingGameplayEvents.shift()!);
-    }
+    this.replayReadyEvents(game);
     if (!this.sessionId || game.sessionRole !== 'guest' || this.status !== 'connected') return;
 
-    const phaseAllowsPrediction = !this.phaseState || this.phaseState.phase === 'run';
+    const phaseAllowsPrediction = (!this.phaseState || this.phaseState.phase === 'run')
+      && game.scene.wantsJoystick === true;
     const inputState = game.localPlayer.downed || !phaseAllowsPrediction
       ? { moveX: 0, moveY: 0, abilityPressSeq: this.lastInput.abilityPressSeq }
       : game.localInput.read(nowMs);
-    const changed = inputState.moveX !== this.lastInput.moveX
-      || inputState.moveY !== this.lastInput.moveY
-      || inputState.abilityPressSeq !== this.lastInput.abilityPressSeq;
-    if (changed || (phaseAllowsPrediction && nowMs - this.lastInputSentAt >= 1000 / 30)) {
-      this.lastInput = { ...inputState, seq: ++this.inputSeq };
-      this.lastInputSentAt = nowMs;
-      if (this.acceptedPeerId) {
-        this.ignoreTransportFailure(this.transport.sendControl(this.acceptedPeerId, {
-          type: 'input',
-          version: NETWORK_VERSION,
-          input: this.lastInput,
-        }));
-      }
-    }
     if (!phaseAllowsPrediction || game.localPlayer.downed) {
       this.prediction.clear();
       this.predictedBase = null;
+      this.applyPredictedAbility(game, nowMs);
       return;
     }
+
+    const command = this.transmitInput(inputState);
+    this.metrics.lastInputSeq = command.seq;
+    this.beginPredictedAbility(game, command, nowMs);
     if (this.predictedBase) {
       game.localPlayer.x = this.predictedBase.x;
       game.localPlayer.y = this.predictedBase.y;
     }
     applyPlayerMovement(game.localPlayer, game.state.obstacles, inputState, dt);
     this.predictedBase = { x: game.localPlayer.x, y: game.localPlayer.y };
-    this.prediction.record(this.lastInput, dt);
+    this.prediction.record(command, dt);
     const rendered = this.prediction.renderPose(game.localPlayer, nowMs);
     game.localPlayer.x = rendered.x;
     game.localPlayer.y = rendered.y;
+    this.applyPredictedAbility(game, nowMs);
   }
 }
